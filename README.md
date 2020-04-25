@@ -26,4 +26,4 @@ For the best experience, please change the Vtx and Mtx structures to use floats 
 
 # License
 
-See LICENSE.txt. Restributions are allowed only in source form, not in binary form.
+See LICENSE.txt. Redistributions are allowed only in source form, not in binary form.
