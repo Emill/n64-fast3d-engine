@@ -371,21 +371,35 @@ static void import_texture_ia16(int tile) {
 
 static void import_texture_ci4(int tile) {
     uint8_t rgba32_buf[32768];
-    
+    uint32_t mode = (rdp.other_mode_h & (3U << G_MDSFT_TEXTLUT));
+
     for (uint32_t i = 0; i < rdp.loaded_texture[tile].size_bytes * 2; i++) {
         uint8_t byte = rdp.loaded_texture[tile].addr[i / 2];
         uint8_t idx = (byte >> (4 - (i % 2) * 4)) & 0xf;
-        uint16_t col16 = (rdp.palette[idx * 2] << 8) | rdp.palette[idx * 2 + 1]; // Big endian load
-        uint8_t a = col16 & 1;
-        uint8_t r = col16 >> 11;
-        uint8_t g = (col16 >> 6) & 0x1f;
-        uint8_t b = (col16 >> 1) & 0x1f;
-        rgba32_buf[4*i + 0] = SCALE_5_8(r);
-        rgba32_buf[4*i + 1] = SCALE_5_8(g);
-        rgba32_buf[4*i + 2] = SCALE_5_8(b);
-        rgba32_buf[4*i + 3] = a ? 255 : 0;
+        
+        if (mode == G_TT_IA16) {
+            uint8_t intensity = rdp.palette[idx * 2];
+            uint8_t alpha = rdp.palette[idx * 2 + 1];
+            uint8_t r = intensity;
+            uint8_t g = intensity;
+            uint8_t b = intensity;
+            rgba32_buf[4*i + 0] = r;
+            rgba32_buf[4*i + 1] = g;
+            rgba32_buf[4*i + 2] = b;
+            rgba32_buf[4*i + 3] = alpha;
+        } else { // G_TT_RGBA16
+            uint16_t col16 = (rdp.palette[idx * 2] << 8) | rdp.palette[idx * 2 + 1]; // Big endian load
+            uint8_t a = col16 & 1;
+            uint8_t r = col16 >> 11;
+            uint8_t g = (col16 >> 6) & 0x1f;
+            uint8_t b = (col16 >> 1) & 0x1f;
+            rgba32_buf[4*i + 0] = SCALE_5_8(r);
+            rgba32_buf[4*i + 1] = SCALE_5_8(g);
+            rgba32_buf[4*i + 2] = SCALE_5_8(b);
+            rgba32_buf[4*i + 3] = a ? 255 : 0;
+        }
     }
-    
+
     uint32_t width = rdp.texture_tile.line_size_bytes * 2;
     uint32_t height = rdp.loaded_texture[tile].size_bytes / rdp.texture_tile.line_size_bytes;
     
@@ -394,18 +408,32 @@ static void import_texture_ci4(int tile) {
 
 static void import_texture_ci8(int tile) {
     uint8_t rgba32_buf[16384];
+    uint32_t mode = (rdp.other_mode_h & (3U << G_MDSFT_TEXTLUT));
     
     for (uint32_t i = 0; i < rdp.loaded_texture[tile].size_bytes; i++) {
         uint8_t idx = rdp.loaded_texture[tile].addr[i];
-        uint16_t col16 = (rdp.palette[idx * 2] << 8) | rdp.palette[idx * 2 + 1]; // Big endian load
-        uint8_t a = col16 & 1;
-        uint8_t r = col16 >> 11;
-        uint8_t g = (col16 >> 6) & 0x1f;
-        uint8_t b = (col16 >> 1) & 0x1f;
-        rgba32_buf[4*i + 0] = SCALE_5_8(r);
-        rgba32_buf[4*i + 1] = SCALE_5_8(g);
-        rgba32_buf[4*i + 2] = SCALE_5_8(b);
-        rgba32_buf[4*i + 3] = a ? 255 : 0;
+        
+        if (mode == G_TT_IA16) {
+            uint8_t intensity = rdp.palette[idx * 2];
+            uint8_t alpha = rdp.palette[idx * 2 + 1];
+            uint8_t r = intensity;
+            uint8_t g = intensity;
+            uint8_t b = intensity;
+            rgba32_buf[4*i + 0] = r;
+            rgba32_buf[4*i + 1] = g;
+            rgba32_buf[4*i + 2] = b;
+            rgba32_buf[4*i + 3] = alpha;
+        } else { // G_TT_RGBA16
+            uint16_t col16 = (rdp.palette[idx * 2] << 8) | rdp.palette[idx * 2 + 1]; // Big endian load
+            uint8_t a = col16 & 1;
+            uint8_t r = col16 >> 11;
+            uint8_t g = (col16 >> 6) & 0x1f;
+            uint8_t b = (col16 >> 1) & 0x1f;
+            rgba32_buf[4*i + 0] = SCALE_5_8(r);
+            rgba32_buf[4*i + 1] = SCALE_5_8(g);
+            rgba32_buf[4*i + 2] = SCALE_5_8(b);
+            rgba32_buf[4*i + 3] = a ? 255 : 0;
+        }
     }
     
     uint32_t width = rdp.texture_tile.line_size_bytes;
