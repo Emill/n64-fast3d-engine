@@ -14,10 +14,14 @@
 #include "gfx_cc.h"
 #include "gfx_window_manager_api.h"
 #include "gfx_rendering_api.h"
+#include "gfx_direct3d_common.h"
 
 #include "gfx_screen_config.h"
 
 #define WINCLASS_NAME L"SUPERMARIO64"
+#define GAME_TITLE_NAME L"Super Mario 64 PC-Port (D3D11)"
+#define WINDOW_CLIENT_MIN_WIDTH 320
+#define WINDOW_CLIENT_MIN_HEIGHT 240
 #define DEBUG_D3D 0
 
 using namespace Microsoft::WRL; // For ComPtr
@@ -98,14 +102,8 @@ static struct {
     void (*run_one_game_iter)(void);
 } d3d;
 
-HWND h_wnd;
-LARGE_INTEGER last_time, frequency;
-
-static void ThrowIfFailed(HRESULT res) {
-    if (FAILED(res)) {
-        throw res;
-    }
-}
+static HWND h_wnd;
+static LARGE_INTEGER last_time, frequency;
 
 static void SetDebugNameFormatted(ID3D11DeviceChild *device_child, char *format, uint32_t value) {
 #if DEBUG_D3D
@@ -115,7 +113,7 @@ static void SetDebugNameFormatted(ID3D11DeviceChild *device_child, char *format,
 #endif
 }
 
-void create_render_target_views(uint32_t width, uint32_t height) {
+static void create_render_target_views(uint32_t width, uint32_t height) {
     if (width == 0 || height == 0) {
         return;
     }
@@ -177,9 +175,11 @@ LRESULT CALLBACK gfx_d3d11_dxgi_wnd_proc(HWND h_wnd, UINT message, WPARAM w_para
             break;
         }
         case WM_GETMINMAXINFO: {
+            RECT wr = { 0, 0, WINDOW_CLIENT_MIN_WIDTH, WINDOW_CLIENT_MIN_HEIGHT };
+            AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
             LPMINMAXINFO lpMMI = (LPMINMAXINFO) l_param;
-            lpMMI->ptMinTrackSize.x = 320;
-            lpMMI->ptMinTrackSize.y = 240;
+            lpMMI->ptMinTrackSize.x = wr.right - wr.left;
+            lpMMI->ptMinTrackSize.y = wr.bottom - wr.top;
             break;
         }
         case WM_DESTROY: {
@@ -231,7 +231,7 @@ static void gfx_d3d11_dxgi_init(void) {
     RECT wr = { 0, 0, DESIRED_SCREEN_WIDTH, DESIRED_SCREEN_HEIGHT };
     AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
 
-    h_wnd = CreateWindowW(WINCLASS_NAME, L"Super Mario 64 PC-Port (D3D11)", WS_OVERLAPPEDWINDOW,
+    h_wnd = CreateWindowW(WINCLASS_NAME, GAME_TITLE_NAME, WS_OVERLAPPEDWINDOW,
                           CW_USEDEFAULT, 0, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr,
                           nullptr, nullptr);
 
@@ -356,86 +356,6 @@ static void gfx_d3d11_dxgi_main_loop(void (*run_one_game_iter)(void)) {
         if (d3d.run_one_game_iter != nullptr) {
             d3d.run_one_game_iter();
         }
-    }
-}
-
-static void append_str(char *buf, size_t *len, const char *str) {
-    while (*str != '\0') buf[(*len)++] = *str++;
-}
-
-static void append_line(char *buf, size_t *len, const char *str) {
-    while (*str != '\0') buf[(*len)++] = *str++;
-    buf[(*len)++] = '\r';
-    buf[(*len)++] = '\n';
-}
-
-static const char *shader_item_to_str(uint32_t item, bool with_alpha, bool only_alpha, bool inputs_have_alpha, bool hint_single_element) {
-    if (!only_alpha) {
-        switch (item) {
-            case SHADER_0:
-                return with_alpha ? "float4(0.0, 0.0, 0.0, 0.0)" : "float3(0.0, 0.0, 0.0)";
-            case SHADER_INPUT_1:
-                return with_alpha || !inputs_have_alpha ? "input.input1" : "input.input1.rgb";
-            case SHADER_INPUT_2:
-                return with_alpha || !inputs_have_alpha ? "input.input2" : "input.input2.rgb";
-            case SHADER_INPUT_3:
-                return with_alpha || !inputs_have_alpha ? "input.input3" : "input.input3.rgb";
-            case SHADER_INPUT_4:
-                return with_alpha || !inputs_have_alpha ? "input.input4" : "input.input4.rgb";
-            case SHADER_TEXEL0:
-                return with_alpha ? "texVal0" : "texVal0.rgb";
-            case SHADER_TEXEL0A:
-                return hint_single_element ? "texVal0.a" :
-                    (with_alpha ? "vec4(texelVal0.a, texelVal0.a, texelVal0.a, texelVal0.a)" : "float3(texelVal0.a, texelVal0.a, texelVal0.a)");
-            case SHADER_TEXEL1:
-                return with_alpha ? "texVal1" : "texVal1.rgb";
-        }
-    } else {
-        switch (item) {
-            case SHADER_0:
-                return "0.0";
-            case SHADER_INPUT_1:
-                return "input.input1.a";
-            case SHADER_INPUT_2:
-                return "input.input2.a";
-            case SHADER_INPUT_3:
-                return "input.input3.a";
-            case SHADER_INPUT_4:
-                return "input.input4.a";
-            case SHADER_TEXEL0:
-                return "texVal0.a";
-            case SHADER_TEXEL0A:
-                return "texVal0.a";
-            case SHADER_TEXEL1:
-                return "texVal1.a";
-        }
-    }
-}
-
-static void append_formula(char *buf, size_t *len, uint8_t c[2][4], bool do_single, bool do_multiply, bool do_mix, bool with_alpha, bool only_alpha, bool opt_alpha) {
-    if (do_single) {
-        append_str(buf, len, shader_item_to_str(c[only_alpha][3], with_alpha, only_alpha, opt_alpha, false));
-    } else if (do_multiply) {
-        append_str(buf, len, shader_item_to_str(c[only_alpha][0], with_alpha, only_alpha, opt_alpha, false));
-        append_str(buf, len, " * ");
-        append_str(buf, len, shader_item_to_str(c[only_alpha][2], with_alpha, only_alpha, opt_alpha, true));
-    } else if (do_mix) {
-        append_str(buf, len, "lerp(");
-        append_str(buf, len, shader_item_to_str(c[only_alpha][1], with_alpha, only_alpha, opt_alpha, false));
-        append_str(buf, len, ", ");
-        append_str(buf, len, shader_item_to_str(c[only_alpha][0], with_alpha, only_alpha, opt_alpha, false));
-        append_str(buf, len, ", ");
-        append_str(buf, len, shader_item_to_str(c[only_alpha][2], with_alpha, only_alpha, opt_alpha, true));
-        append_str(buf, len, ")");
-    } else {
-        append_str(buf, len, "(");
-        append_str(buf, len, shader_item_to_str(c[only_alpha][0], with_alpha, only_alpha, opt_alpha, false));
-        append_str(buf, len, " - ");
-        append_str(buf, len, shader_item_to_str(c[only_alpha][1], with_alpha, only_alpha, opt_alpha, false));
-        append_str(buf, len, ") * ");
-        append_str(buf, len, shader_item_to_str(c[only_alpha][2], with_alpha, only_alpha, opt_alpha, true));
-        append_str(buf, len, " + ");
-        append_str(buf, len, shader_item_to_str(c[only_alpha][3], with_alpha, only_alpha, opt_alpha, false));
     }
 }
 
@@ -655,7 +575,7 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
     if (opt_fog) {
         ied[ied_index++] = { "FOG", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 };
     }
-    for (int i = 0; i < num_inputs; i++) {
+    for (unsigned int i = 0; i < num_inputs; i++) {
         DXGI_FORMAT format = opt_alpha ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_R32G32B32_FLOAT;
         ied[ied_index++] = { "INPUT", i, format, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 };
     }
@@ -882,9 +802,9 @@ static void gfx_d3d11_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t
 
     D3D11_MAPPED_SUBRESOURCE ms;
     ZeroMemory(&ms, sizeof(D3D11_MAPPED_SUBRESOURCE));
-    d3d.context->Map(d3d.vertex_buffer.Get(), NULL, D3D11_MAP_WRITE_DISCARD, NULL, &ms);
+    d3d.context->Map(d3d.vertex_buffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms);
     memcpy(ms.pData, buf_vbo, buf_vbo_len * sizeof(float));
-    d3d.context->Unmap(d3d.vertex_buffer.Get(), NULL);
+    d3d.context->Unmap(d3d.vertex_buffer.Get(), 0);
 
     uint32_t stride = d3d.shader_program->num_floats * sizeof(float);
     uint32_t offset = 0;
@@ -931,9 +851,9 @@ static void gfx_d3d11_start_frame(void) {
 
     D3D11_MAPPED_SUBRESOURCE ms;
     ZeroMemory(&ms, sizeof(D3D11_MAPPED_SUBRESOURCE));
-    d3d.context->Map(d3d.per_frame_cb.Get(), NULL, D3D11_MAP_WRITE_DISCARD, NULL, &ms);
+    d3d.context->Map(d3d.per_frame_cb.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms);
     memcpy(ms.pData, &d3d.per_frame_cb_data, sizeof(PerFrameCB));
-    d3d.context->Unmap(d3d.per_frame_cb.Get(), NULL);
+    d3d.context->Unmap(d3d.per_frame_cb.Get(), 0);
 
     d3d.context->PSSetConstantBuffers(0, 1, d3d.per_frame_cb.GetAddressOf());
 }
