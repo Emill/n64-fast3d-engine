@@ -920,7 +920,7 @@ static void gfx_d3d11_init(void) {
 static void gfx_d3d11_start_frame(void) {
     // Clear render targets
 
-    const float clearColor[] = { 0.15f, 0.08f, 0.04f, 1.0f };
+    const float clearColor[] = { 0.0f, 0.0f, 0.0f, 1.0f };
     d3d.context->ClearRenderTargetView(d3d.backbuffer_view.Get(), clearColor);
     d3d.context->ClearDepthStencilView(d3d.depth_stencil_view.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
 
