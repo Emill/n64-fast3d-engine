@@ -7,7 +7,6 @@
 #include <cmath>
 
 #include <windows.h>
-#include <dwmapi.h>
 #include <wrl/client.h>
 
 #include <d3d11.h>
@@ -169,6 +168,34 @@ static void create_render_target_views(uint32_t width, uint32_t height) {
     d3d.current_height = height;
 }
 
+static void calculate_sync_interval() {
+    ComPtr<IDXGIOutput> output;
+    ThrowIfFailed(d3d.swap_chain.Get()->GetContainingOutput(output.GetAddressOf()));
+    DXGI_OUTPUT_DESC output_desc;
+    ThrowIfFailed(output->GetDesc(&output_desc));
+
+    MONITORINFOEX monitor_info;
+    monitor_info.cbSize = sizeof(MONITORINFOEX);
+    GetMonitorInfo(output_desc.Monitor, &monitor_info);
+
+    DEVMODE dev_mode;
+    dev_mode.dmSize = sizeof(DEVMODE);
+    dev_mode.dmDriverExtra = 0;
+    EnumDisplaySettings(monitor_info.szDevice, ENUM_CURRENT_SETTINGS, &dev_mode);
+
+    if (dev_mode.dmDisplayFrequency >= 29 && dev_mode.dmDisplayFrequency <= 31) {
+        sync_interval = 1;
+    } else if (dev_mode.dmDisplayFrequency >= 59 && dev_mode.dmDisplayFrequency <= 61) {
+        sync_interval = 2;
+    } else if (dev_mode.dmDisplayFrequency >= 89 && dev_mode.dmDisplayFrequency <= 91) {
+        sync_interval = 3;
+    } else if (dev_mode.dmDisplayFrequency >= 119 && dev_mode.dmDisplayFrequency <= 121) {
+        sync_interval = 4;
+    } else {
+        sync_interval = 0;
+    }
+}
+
 LRESULT CALLBACK gfx_d3d11_dxgi_wnd_proc(HWND h_wnd, UINT message, WPARAM w_param, LPARAM l_param) {
     switch (message) {
         case WM_SIZE: {
@@ -177,12 +204,20 @@ LRESULT CALLBACK gfx_d3d11_dxgi_wnd_proc(HWND h_wnd, UINT message, WPARAM w_para
             create_render_target_views(rect.right - rect.left, rect.bottom - rect.top);
             break;
         }
+        case WM_EXITSIZEMOVE: {
+            calculate_sync_interval();
+            break;
+        }
         case WM_GETMINMAXINFO: {
             RECT wr = { 0, 0, WINDOW_CLIENT_MIN_WIDTH, WINDOW_CLIENT_MIN_HEIGHT };
             AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
             LPMINMAXINFO lpMMI = (LPMINMAXINFO) l_param;
             lpMMI->ptMinTrackSize.x = wr.right - wr.left;
             lpMMI->ptMinTrackSize.y = wr.bottom - wr.top;
+            break;
+        }
+        case WM_DISPLAYCHANGE: {
+            calculate_sync_interval();
             break;
         }
         case WM_DESTROY: {
@@ -251,27 +286,6 @@ static void gfx_d3d11_dxgi_init(void) {
     
     d3d.sample_description.Count = 1;
     d3d.sample_description.Quality = 0;
-
-    // Get monitor refresh rate
-
-    DWM_TIMING_INFO timing_info;
-    ZeroMemory(&timing_info, sizeof(DWM_TIMING_INFO));
-
-    timing_info.cbSize = sizeof(DWM_TIMING_INFO);
-    ThrowIfFailed(DwmGetCompositionTimingInfo(nullptr, &timing_info));
-
-    // Decide vsync interval
-
-    uint32_t refresh_rate = std::round((float)timing_info.rateRefresh.uiNumerator / timing_info.rateRefresh.uiDenominator);
-    if (refresh_rate == 60) {
-        sync_interval = 2;
-    } else if (refresh_rate == 90) {
-        sync_interval = 3;
-    } else if (refresh_rate == 120) {
-        sync_interval = 4;
-    } else {
-        sync_interval = 0;
-    }
 
     // Create swap chain description
 
@@ -350,6 +364,10 @@ static void gfx_d3d11_dxgi_init(void) {
 
     QueryPerformanceFrequency(&frequency);
     accumulated_time.QuadPart = 0;
+
+    // Decide vsync interval
+
+    calculate_sync_interval();
 
     // Show the window
 
