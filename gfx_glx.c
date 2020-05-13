@@ -17,6 +17,8 @@
 
 #include "configfile.h"
 
+#define GAME_TITLE_NAME "Super Mario 64 PC-port (GLX)"
+
 #ifdef VERSION_EU
 #define FRAME_INTERVAL_US_NUMERATOR 40000
 #define FRAME_INTERVAL_US_DENOMINATOR 1
@@ -284,7 +286,7 @@ static void gfx_glx_init(void) {
         gfx_glx_set_fullscreen(true);
     }
 
-    XStoreName(glx.dpy, glx.win, "Super Mario 64 PC-port GLX");
+    XStoreName(glx.dpy, glx.win, GAME_TITLE_NAME);
     GLXContext glc = glXCreateContext(glx.dpy, vi, NULL, GL_TRUE);
     glXMakeCurrent(glx.dpy, glx.win, glc);
     

@@ -4,8 +4,10 @@
 
 #include <stdio.h>
 #include <vector>
+#include <cmath>
 
 #include <windows.h>
+#include <dwmapi.h>
 #include <wrl/client.h>
 
 #include <d3d11.h>
@@ -19,7 +21,7 @@
 #include "gfx_screen_config.h"
 
 #define WINCLASS_NAME L"SUPERMARIO64"
-#define GAME_TITLE_NAME L"Super Mario 64 PC-Port (D3D11)"
+#define GAME_TITLE_NAME L"Super Mario 64 PC-Port (Direct3D 11)"
 #define WINDOW_CLIENT_MIN_WIDTH 320
 #define WINDOW_CLIENT_MIN_HEIGHT 240
 #define DEBUG_D3D 0
@@ -103,15 +105,16 @@ static struct {
 } d3d;
 
 static HWND h_wnd;
-static LARGE_INTEGER last_time, frequency;
+static LARGE_INTEGER last_time, accumulated_time, frequency;
+static uint8_t sync_interval;
 
-static void SetDebugNameFormatted(ID3D11DeviceChild *device_child, char *format, uint32_t value) {
-#if DEBUG_D3D
-    char debug_name[128];
-    int length = sprintf(debug_name, format, value);
-    ThrowIfFailed(device_child->SetPrivateData(WKPDID_D3DDebugObjectName, length, debug_name));
-#endif
-}
+// static void SetDebugNameFormatted(ID3D11DeviceChild *device_child, char *format, uint32_t value) {
+// #if DEBUG_D3D
+//     char debug_name[128];
+//     int length = sprintf(debug_name, format, value);
+//     ThrowIfFailed(device_child->SetPrivateData(WKPDID_D3DDebugObjectName, length, debug_name));
+// #endif
+// }
 
 static void create_render_target_views(uint32_t width, uint32_t height) {
     if (width == 0 || height == 0) {
@@ -210,6 +213,7 @@ LRESULT CALLBACK gfx_d3d11_dxgi_wnd_proc(HWND h_wnd, UINT message, WPARAM w_para
 static void gfx_d3d11_dxgi_init(void) {
 
     // Create window
+
     WNDCLASSEXW wcex;
     ZeroMemory(&wcex, sizeof(WNDCLASSEX));
 
@@ -237,14 +241,37 @@ static void gfx_d3d11_dxgi_init(void) {
 
     // Center window
 
-    int xPos = (GetSystemMetrics(SM_CXSCREEN) - wr.right) * 0.5;
-    int yPos = (GetSystemMetrics(SM_CYSCREEN) - wr.bottom) * 0.5;
+    int screen_width = GetSystemMetrics(SM_CXSCREEN);
+    int screen_height = GetSystemMetrics(SM_CYSCREEN);
+    int xPos = (screen_width - wr.right) * 0.5;
+    int yPos = (screen_height - wr.bottom) * 0.5;
     SetWindowPos(h_wnd, 0, xPos, yPos, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
 
     // Sample description to be used in back buffer and depth buffer
     
     d3d.sample_description.Count = 1;
     d3d.sample_description.Quality = 0;
+
+    // Get monitor refresh rate
+
+    DWM_TIMING_INFO timing_info;
+    ZeroMemory(&timing_info, sizeof(DWM_TIMING_INFO));
+
+    timing_info.cbSize = sizeof(DWM_TIMING_INFO);
+    ThrowIfFailed(DwmGetCompositionTimingInfo(nullptr, &timing_info));
+
+    // Decide vsync interval
+
+    uint32_t refresh_rate = std::round((float)timing_info.rateRefresh.uiNumerator / timing_info.rateRefresh.uiDenominator);
+    if (refresh_rate == 60) {
+        sync_interval = 2;
+    } else if (refresh_rate == 90) {
+        sync_interval = 3;
+    } else if (refresh_rate == 120) {
+        sync_interval = 4;
+    } else {
+        sync_interval = 0;
+    }
 
     // Create swap chain description
 
@@ -255,7 +282,7 @@ static void gfx_d3d11_dxgi_init(void) {
     swap_chain_description.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     swap_chain_description.BufferDesc.Height = DESIRED_SCREEN_HEIGHT;
     swap_chain_description.BufferDesc.Width = DESIRED_SCREEN_WIDTH;
-    swap_chain_description.BufferDesc.RefreshRate.Numerator = 60; // 60Hz, maybe not force it?
+    swap_chain_description.BufferDesc.RefreshRate.Numerator = 0;
     swap_chain_description.BufferDesc.RefreshRate.Denominator = 1;
     swap_chain_description.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     swap_chain_description.OutputWindow = h_wnd;
@@ -318,44 +345,69 @@ static void gfx_d3d11_dxgi_init(void) {
     constant_buffer_desc.MiscFlags = 0;
 
     ThrowIfFailed(d3d.device->CreateBuffer(&constant_buffer_desc, NULL, d3d.per_frame_cb.GetAddressOf()));
+   
+    // Initialize some timer values
+
+    QueryPerformanceFrequency(&frequency);
+    accumulated_time.QuadPart = 0;
 
     // Show the window
 
-    QueryPerformanceFrequency(&frequency);
-    QueryPerformanceCounter(&last_time);
-
     ShowWindow(h_wnd, SW_SHOW);
-    UpdateWindow(h_wnd);
 }
 
 static void gfx_d3d11_dxgi_main_loop(void (*run_one_game_iter)(void)) {
     MSG msg = { 0 };
 
-    if (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+    bool quit = false;
+    while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
-    } else {
-        if (IsIconic(h_wnd)) {
-            Sleep(1);
-            return;
+        if (msg.message == WM_QUIT) {
+            quit = true;
         }
+    }
 
-        LARGE_INTEGER current_time, elapsed_time_microseconds;
+    if (quit) {
+        return;
+    }
+
+    if (IsIconic(h_wnd)) {
+        Sleep(50);
+        return;
+    }
+
+    d3d.run_one_game_iter = run_one_game_iter;
+
+    if (sync_interval == 0) {
+        LARGE_INTEGER current_time;
         QueryPerformanceCounter(&current_time);
+
+        LARGE_INTEGER elapsed_time_microseconds;
         elapsed_time_microseconds.QuadPart = current_time.QuadPart - last_time.QuadPart;
         elapsed_time_microseconds.QuadPart *= 1000000;
         elapsed_time_microseconds.QuadPart /= frequency.QuadPart;
 
-        if (elapsed_time_microseconds.QuadPart < 33333.33333333) {
-            return;
-        }
-
+        accumulated_time.QuadPart += elapsed_time_microseconds.QuadPart;
         last_time = current_time;
 
-        d3d.run_one_game_iter = run_one_game_iter;
+        const uint32_t FRAME_TIME = 1000000 / 30;
+
+        if (accumulated_time.QuadPart >= FRAME_TIME) {
+            accumulated_time.QuadPart %= FRAME_TIME;
+
+            if (d3d.run_one_game_iter != nullptr) {
+                d3d.run_one_game_iter();
+            }
+            d3d.swap_chain->Present(1, 0);
+        } else {
+            Sleep(1);
+        }
+    } else {
         if (d3d.run_one_game_iter != nullptr) {
             d3d.run_one_game_iter();
         }
+        d3d.swap_chain->Present(sync_interval, 0);
     }
 }
 
@@ -373,7 +425,6 @@ static bool gfx_d3d11_dxgi_start_frame(void) {
 }
 
 static void gfx_d3d11_dxgi_swap_buffers_begin(void) {
-    d3d.swap_chain->Present(1, 0);
 }
 
 static void gfx_d3d11_dxgi_swap_buffers_end(void) {
@@ -395,39 +446,9 @@ static void gfx_d3d11_load_shader(struct ShaderProgram *new_prg) {
 }
 
 static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shader_id) {
-    uint8_t c[2][4];
-    for (int i = 0; i < 4; i++) {
-        c[0][i] = (shader_id >> (i * 3)) & 7;
-        c[1][i] = (shader_id >> (12 + i * 3)) & 7;
-    }
+    CCFeatures cc_features;
+    get_cc_features(shader_id, &cc_features);
 
-    bool opt_alpha = (shader_id & SHADER_OPT_ALPHA) != 0;
-    bool opt_fog = (shader_id & SHADER_OPT_FOG) != 0;
-    bool opt_texture_edge = (shader_id & SHADER_OPT_TEXTURE_EDGE) != 0;
-    bool opt_noise = (shader_id & SHADER_OPT_NOISE) != 0;
-    
-    bool used_textures[2] = {0, 0};
-    int num_inputs = 0;
-    for (int i = 0; i < 2; i++) {
-        for (int j = 0; j < 4; j++) {
-            if (c[i][j] >= SHADER_INPUT_1 && c[i][j] <= SHADER_INPUT_4) {
-                if (c[i][j] > num_inputs) {
-                    num_inputs = c[i][j];
-                }
-            }
-            if (c[i][j] == SHADER_TEXEL0 || c[i][j] == SHADER_TEXEL0A) {
-                used_textures[0] = true;
-            }
-            if (c[i][j] == SHADER_TEXEL1) {
-                used_textures[1] = true;
-            }
-        }
-    }
-    bool do_single[2] = {c[0][2] == 0, c[1][2] == 0};
-    bool do_multiply[2] = {c[0][1] == 0 && c[0][3] == 0, c[1][1] == 0 && c[1][3] == 0};
-    bool do_mix[2] = {c[0][1] == c[0][3], c[1][1] == c[1][3]};
-    bool color_alpha_same = (shader_id & 0xfff) == ((shader_id >> 12) & 0xfff);
-    
     char buf[2048];
     size_t len = 0;
     size_t num_floats = 4;
@@ -437,35 +458,35 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
     append_line(buf, &len, "struct PSInput {");
     append_line(buf, &len, "    float4 position : SV_POSITION;");
 
-    if (used_textures[0] || used_textures[1]) {
+    if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
         append_line(buf, &len, "    float2 uv : TEXCOORD;");
         num_floats += 2;
     }
 
-    if (opt_fog) {
+    if (cc_features.opt_fog) {
         append_line(buf, &len, "    float4 fog : FOG;");
         num_floats += 4;
     }
-    for (int i = 0; i < num_inputs; i++) {
-        len += sprintf(buf + len, "    float%d input%d : INPUT%d;\r\n", opt_alpha ? 4 : 3, i + 1, i);
-        num_floats += opt_alpha ? 4 : 3;
+    for (int i = 0; i < cc_features.num_inputs; i++) {
+        len += sprintf(buf + len, "    float%d input%d : INPUT%d;\r\n", cc_features.opt_alpha ? 4 : 3, i + 1, i);
+        num_floats += cc_features.opt_alpha ? 4 : 3;
     }
     append_line(buf, &len, "};");
 
     // Textures and samplers
 
-    if (used_textures[0]) {
+    if (cc_features.used_textures[0]) {
         append_line(buf, &len, "Texture2D g_texture0 : register(t0);");
         append_line(buf, &len, "SamplerState g_sampler0 : register(s0);");
     }
-    if (used_textures[1]) {
+    if (cc_features.used_textures[1]) {
         append_line(buf, &len, "Texture2D g_texture1 : register(t1);");
         append_line(buf, &len, "SamplerState g_sampler1 : register(s1);");
     }
 
     // Constant buffer and random function
 
-    if (opt_alpha && opt_noise) {
+    if (cc_features.opt_alpha && cc_features.opt_noise) {
         append_line(buf, &len, "cbuffer PerFrameCB : register(b0) {");
         append_line(buf, &len, "    uint frame_count;");
         append_line(buf, &len, "    uint window_height;");
@@ -480,25 +501,25 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
     // Vertex shader
 
     append_str(buf, &len, "PSInput VSMain(float4 position : POSITION");
-    if (used_textures[0] || used_textures[1]) {
+    if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
         append_str(buf, &len, ", float2 uv : TEXCOORD");
     }
-    if (opt_fog) {
+    if (cc_features.opt_fog) {
         append_str(buf, &len, ", float4 fog : FOG");
     }
-    for (int i = 0; i < num_inputs; i++) {
-        len += sprintf(buf + len, ", float%d input%d : INPUT%d", opt_alpha ? 4 : 3, i + 1, i);
+    for (int i = 0; i < cc_features.num_inputs; i++) {
+        len += sprintf(buf + len, ", float%d input%d : INPUT%d", cc_features.opt_alpha ? 4 : 3, i + 1, i);
     }
     append_line(buf, &len, ") {");
     append_line(buf, &len, "    PSInput result;");
     append_line(buf, &len, "    result.position = position;");
-    if (used_textures[0] || used_textures[1]) {
+    if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
         append_line(buf, &len, "    result.uv = uv;");
     }
-    if (opt_fog) {
+    if (cc_features.opt_fog) {
         append_line(buf, &len, "    result.fog = fog;");
     }
-    for (int i = 0; i < num_inputs; i++) {
+    for (int i = 0; i < cc_features.num_inputs; i++) {
         len += sprintf(buf + len, "    result.input%d = input%d;\r\n", i + 1, i + 1);
     }
     append_line(buf, &len, "    return result;");
@@ -507,42 +528,42 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
     // Pixel shader
 
     append_line(buf, &len, "float4 PSMain(PSInput input, float4 screenSpace : SV_Position) : SV_TARGET {");
-    if (used_textures[0]) {
+    if (cc_features.used_textures[0]) {
         append_line(buf, &len, "    float4 texVal0 = g_texture0.Sample(g_sampler0, input.uv);");
     }
-    if (used_textures[1]) {
+    if (cc_features.used_textures[1]) {
         append_line(buf, &len, "    float4 texVal1 = g_texture1.Sample(g_sampler1, input.uv);");
     }
     
-    append_str(buf, &len, opt_alpha ? "    float4 texel = " : "    float3 texel = ");
-    if (!color_alpha_same && opt_alpha) {
+    append_str(buf, &len, cc_features.opt_alpha ? "    float4 texel = " : "    float3 texel = ");
+    if (!cc_features.color_alpha_same && cc_features.opt_alpha) {
         append_str(buf, &len, "float4(");
-        append_formula(buf, &len, c, do_single[0], do_multiply[0], do_mix[0], false, false, true);
+        append_formula(buf, &len, cc_features.c, cc_features.do_single[0], cc_features.do_multiply[0], cc_features.do_mix[0], false, false, true);
         append_str(buf, &len, ", ");
-        append_formula(buf, &len, c, do_single[1], do_multiply[1], do_mix[1], true, true, true);
+        append_formula(buf, &len, cc_features.c, cc_features.do_single[1], cc_features.do_multiply[1], cc_features.do_mix[1], true, true, true);
         append_str(buf, &len, ")");
     } else {
-        append_formula(buf, &len, c, do_single[0], do_multiply[0], do_mix[0], opt_alpha, false, opt_alpha);
+        append_formula(buf, &len, cc_features.c, cc_features.do_single[0], cc_features.do_multiply[0], cc_features.do_mix[0], cc_features.opt_alpha, false, cc_features.opt_alpha);
     }
     append_line(buf, &len, ";");
     
-    if (opt_texture_edge && opt_alpha) {
+    if (cc_features.opt_texture_edge && cc_features.opt_alpha) {
         append_line(buf, &len, "    if (texel.a > 0.3) texel.a = 1.0; else discard;");
     }
     // TODO discard if alpha is 0?
-    if (opt_fog) {
-        if (opt_alpha) {
+    if (cc_features.opt_fog) {
+        if (cc_features.opt_alpha) {
             append_line(buf, &len, "    texel = float4(lerp(texel.rgb, input.fog.rgb, input.fog.a), texel.a);");
         } else {
             append_line(buf, &len, "    texel = lerp(texel, input.fog.rgb, input.fog.a);");
         }
     }
 
-    if(opt_alpha && opt_noise) {
+    if(cc_features.opt_alpha && cc_features.opt_noise) {
         append_line(buf, &len, "    texel.a *= round(random(float3(floor(screenSpace.xy * (240.0 / window_height)), frame_count)));");
     }
     
-    if (opt_alpha) {
+    if (cc_features.opt_alpha) {
         append_line(buf, &len, "    return texel;");
     } else {
         append_line(buf, &len, "    return float4(texel, 1.0);");
@@ -569,14 +590,14 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
     D3D11_INPUT_ELEMENT_DESC ied[7];
     uint8_t ied_index = 0;
     ied[ied_index++] = { "POSITION", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 };
-    if (used_textures[0] || used_textures[1]) {
+    if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
         ied[ied_index++] = { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 };
     }
-    if (opt_fog) {
+    if (cc_features.opt_fog) {
         ied[ied_index++] = { "FOG", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 };
     }
-    for (unsigned int i = 0; i < num_inputs; i++) {
-        DXGI_FORMAT format = opt_alpha ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_R32G32B32_FLOAT;
+    for (unsigned int i = 0; i < cc_features.num_inputs; i++) {
+        DXGI_FORMAT format = cc_features.opt_alpha ? DXGI_FORMAT_R32G32B32A32_FLOAT : DXGI_FORMAT_R32G32B32_FLOAT;
         ied[ied_index++] = { "INPUT", i, format, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 };
     }
 
@@ -587,7 +608,7 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
     D3D11_BLEND_DESC blend_desc;
     ZeroMemory(&blend_desc, sizeof(D3D11_BLEND_DESC));
 
-    if (opt_alpha) {
+    if (cc_features.opt_alpha) {
         blend_desc.RenderTarget[0].BlendEnable = true;
         blend_desc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
         blend_desc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
@@ -606,10 +627,10 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
     // Save some values
 
     prg->shader_id = shader_id;
-    prg->num_inputs = num_inputs;
+    prg->num_inputs = cc_features.num_inputs;
     prg->num_floats = num_floats;
-    prg->used_textures[0] = used_textures[0];
-    prg->used_textures[1] = used_textures[1];
+    prg->used_textures[0] = cc_features.used_textures[0];
+    prg->used_textures[1] = cc_features.used_textures[1];
 
     return d3d.shader_program = prg;
 }

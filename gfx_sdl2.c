@@ -22,6 +22,8 @@
 
 #include "configfile.h"
 
+#define GAME_TITLE_NAME "Super Mario 64 PC-Port (OpenGL)"
+
 static SDL_Window *wnd;
 static int inverted_scancode_table[512];
 static int vsync_enabled = 0;
@@ -120,7 +122,7 @@ static void gfx_sdl_init(void) {
     //SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
     //SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
 
-    wnd = SDL_CreateWindow("Super Mario 64 PC-Port", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+    wnd = SDL_CreateWindow(GAME_TITLE_NAME, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
             window_width, window_height, SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
 
     set_fullscreen(configFullscreen);
