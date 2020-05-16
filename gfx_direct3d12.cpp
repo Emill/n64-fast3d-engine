@@ -176,7 +176,7 @@ static int max_texture_uploads;
 static D3D12_CPU_DESCRIPTOR_HANDLE get_cpu_descriptor_handle(ComPtr<ID3D12DescriptorHeap>& heap) {
 #if __MINGW32__
     // We would like to do this:
-	// D3D12_CPU_DESCRIPTOR_HANDLE handle = heap->GetCPUDescriptorHandleForHeapStart();
+    // D3D12_CPU_DESCRIPTOR_HANDLE handle = heap->GetCPUDescriptorHandleForHeapStart();
     // but MinGW64 doesn't follow the calling conventions of VC++ for some reason.
     // Per MS documentation "User-defined types can be returned by value from global functions and static member functions"...
     // "Otherwise, the caller assumes the responsibility of allocating memory and passing a pointer for the return value as the first argument".
@@ -429,16 +429,16 @@ static void gfx_direct3d12_upload_texture(uint8_t *rgba32_buf, int width, int he
         const int textures_per_heap = 64;
         
         D3D12_HEAP_DESC heap_desc = {};
-		heap_desc.SizeInBytes = alloc_info.SizeInBytes * textures_per_heap;
+        heap_desc.SizeInBytes = alloc_info.SizeInBytes * textures_per_heap;
         if (alloc_info.Alignment == D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT) {
             heap_desc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
         } else {
             heap_desc.Alignment = alloc_info.Alignment;
         }
-		heap_desc.Properties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-		heap_desc.Properties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-		heap_desc.Properties.Type = D3D12_HEAP_TYPE_DEFAULT;
-		heap_desc.Flags = D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES;
+        heap_desc.Properties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+        heap_desc.Properties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+        heap_desc.Properties.Type = D3D12_HEAP_TYPE_DEFAULT;
+        heap_desc.Flags = D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES;
         ThrowIfFailed(d3d.device->CreateHeap(&heap_desc, IID_ID3D12Heap, IID_PPV_ARGS_Helper(&found_heap->heap)));
         for (int i = 0; i < textures_per_heap; i++) {
             found_heap->free_list.push_back(i);
@@ -461,12 +461,12 @@ static void gfx_direct3d12_upload_texture(uint8_t *rgba32_buf, int width, int he
         CD3DX12_HEAP_PROPERTIES hp(D3D12_HEAP_TYPE_UPLOAD);
         CD3DX12_RESOURCE_DESC rdb = CD3DX12_RESOURCE_DESC::Buffer(upload_buffer_size);
         ThrowIfFailed(d3d.device->CreateCommittedResource(
-			&hp,
-			D3D12_HEAP_FLAG_NONE,
-			&rdb,
-			D3D12_RESOURCE_STATE_GENERIC_READ,
-			nullptr,
-			IID_ID3D12Resource, IID_PPV_ARGS_Helper(&upload_heap)));
+            &hp,
+            D3D12_HEAP_FLAG_NONE,
+            &rdb,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr,
+            IID_ID3D12Resource, IID_PPV_ARGS_Helper(&upload_heap)));
     } else {
         upload_heap = upload_heaps.back();
         upload_heaps.pop_back();
@@ -687,15 +687,15 @@ static void gfx_direct3d12_start_frame(void) {
         d3d.render_targets[d3d.frame_index].Get(),
         D3D12_RESOURCE_STATE_PRESENT,
         D3D12_RESOURCE_STATE_RENDER_TARGET);
-	d3d.command_list->ResourceBarrier(1, &barrier);
+    d3d.command_list->ResourceBarrier(1, &barrier);
     
     CD3DX12_CPU_DESCRIPTOR_HANDLE rtv_handle(get_cpu_descriptor_handle(d3d.rtv_heap), d3d.frame_index, d3d.rtv_descriptor_size);
     D3D12_CPU_DESCRIPTOR_HANDLE dsv_handle = get_cpu_descriptor_handle(d3d.dsv_heap);
     d3d.command_list->OMSetRenderTargets(1, &rtv_handle, FALSE, &dsv_handle);
     
     static unsigned char c;
-	const float clear_color[] = { 0.0f, 0.0f, 0.0f, 1.0f };
-	d3d.command_list->ClearRenderTargetView(rtv_handle, clear_color, 0, nullptr);
+    const float clear_color[] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    d3d.command_list->ClearRenderTargetView(rtv_handle, clear_color, 0, nullptr);
     d3d.command_list->ClearDepthStencilView(dsv_handle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
     
     d3d.vbuf_pos = 0;
@@ -703,11 +703,11 @@ static void gfx_direct3d12_start_frame(void) {
 
 static void create_render_target_views(void) {
     D3D12_CPU_DESCRIPTOR_HANDLE rtv_handle = get_cpu_descriptor_handle(d3d.rtv_heap);
-	for (UINT i = 0; i < 2; i++) {
-		ThrowIfFailed(d3d.swap_chain->GetBuffer(i, IID_ID3D12Resource, (void **)&d3d.render_targets[i]));
-		d3d.device->CreateRenderTargetView(d3d.render_targets[i].Get(), nullptr, rtv_handle);
-		rtv_handle.ptr += d3d.rtv_descriptor_size;
-	}
+    for (UINT i = 0; i < 2; i++) {
+        ThrowIfFailed(d3d.swap_chain->GetBuffer(i, IID_ID3D12Resource, (void **)&d3d.render_targets[i]));
+        d3d.device->CreateRenderTargetView(d3d.render_targets[i].Get(), nullptr, rtv_handle);
+        rtv_handle.ptr += d3d.rtv_descriptor_size;
+    }
 }
 
 static void create_depth_buffer(void) {
@@ -808,10 +808,10 @@ static void gfx_dxgi_init(const char *game_name) {
 
     // Prepare window title
 
-	char title[512];
-	wchar_t w_title[512];
+    char title[512];
+    wchar_t w_title[512];
     int len = sprintf(title, "%s (%s)", game_name, GFX_API_NAME);
-	mbstowcs(w_title, title, len + 1);
+    mbstowcs(w_title, title, len + 1);
     
     // Create window
     WNDCLASSEXW wcex;
@@ -927,10 +927,10 @@ static void gfx_dxgi_init(const char *game_name) {
     // Create SRV heap for texture descriptors
     {
         D3D12_DESCRIPTOR_HEAP_DESC srv_heap_desc = {};
-		srv_heap_desc.NumDescriptors = 1024; // Max unique textures per frame
-		srv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-		srv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-		ThrowIfFailed(d3d.device->CreateDescriptorHeap(&srv_heap_desc, IID_ID3D12DescriptorHeap, IID_PPV_ARGS_Helper(&d3d.srv_heap)));
+        srv_heap_desc.NumDescriptors = 1024; // Max unique textures per frame
+        srv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        srv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        ThrowIfFailed(d3d.device->CreateDescriptorHeap(&srv_heap_desc, IID_ID3D12DescriptorHeap, IID_PPV_ARGS_Helper(&d3d.srv_heap)));
         d3d.srv_descriptor_size = d3d.device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     }
     
@@ -1170,7 +1170,7 @@ static void gfx_dxgi_swap_buffers_begin(void) {
         d3d.render_targets[d3d.frame_index].Get(),
         D3D12_RESOURCE_STATE_RENDER_TARGET,
         D3D12_RESOURCE_STATE_PRESENT);
-	d3d.command_list->ResourceBarrier(1, &barrier);
+    d3d.command_list->ResourceBarrier(1, &barrier);
     
     d3d.command_queue->Wait(d3d.copy_fence.Get(), d3d.copy_fence_value);
     
@@ -1201,11 +1201,11 @@ static void gfx_dxgi_swap_buffers_end(void) {
     QueryPerformanceCounter(&t0);
     
     static UINT64 fence_value;
-	ThrowIfFailed(d3d.command_queue->Signal(d3d.fence.Get(), ++fence_value));
-	if (d3d.fence->GetCompletedValue() < fence_value) {
-		ThrowIfFailed(d3d.fence->SetEventOnCompletion(fence_value, d3d.fence_event));
-		WaitForSingleObject(d3d.fence_event, INFINITE);
-	}
+    ThrowIfFailed(d3d.command_queue->Signal(d3d.fence.Get(), ++fence_value));
+    if (d3d.fence->GetCompletedValue() < fence_value) {
+        ThrowIfFailed(d3d.fence->SetEventOnCompletion(fence_value, d3d.fence_event));
+        WaitForSingleObject(d3d.fence_event, INFINITE);
+    }
     QueryPerformanceCounter(&t1);
     
     d3d.resources_to_clean_at_end_of_frame.clear();

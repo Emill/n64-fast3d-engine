@@ -286,7 +286,7 @@ static void gfx_glx_init(const char *game_name) {
         gfx_glx_set_fullscreen(true);
     }
 
-	char title[512];
+    char title[512];
     int len = sprintf(title, "%s (%s)", game_name, GFX_API_NAME);
 
     XStoreName(glx.dpy, glx.win, title);

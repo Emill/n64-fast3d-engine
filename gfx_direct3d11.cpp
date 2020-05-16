@@ -79,9 +79,9 @@ static struct {
     // Current state
 
     struct ShaderProgram *shader_program;
-    
+
     uint32_t current_width, current_height;
-    
+
     int8_t depth_test;
     int8_t depth_mask;
     int8_t zmode_decal;
@@ -99,7 +99,7 @@ static struct {
     D3D_PRIMITIVE_TOPOLOGY last_primitive_topology = D3D_PRIMITIVE_TOPOLOGY_UNDEFINED;
 
     // Game loop callback
-    
+
     void (*run_one_game_iter)(void);
 } d3d;
 
@@ -135,7 +135,7 @@ static void create_render_target_views(uint32_t width, uint32_t height) {
     // Create back buffer
 
     ComPtr<ID3D11Texture2D> backbuffer_texture;
-    ThrowIfFailed(d3d.swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID*)&backbuffer_texture));
+    ThrowIfFailed(d3d.swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID *) backbuffer_texture.GetAddressOf()));
     ThrowIfFailed(d3d.device->CreateRenderTargetView(backbuffer_texture.Get(), NULL, d3d.backbuffer_view.GetAddressOf()));
 
     // Create depth buffer
@@ -249,10 +249,10 @@ static void gfx_d3d11_dxgi_init(const char *game_name) {
 
     // Prepare window title
 
-	char title[512];
-	wchar_t w_title[512];
+    char title[512];
+    wchar_t w_title[512];
     int len = sprintf(title, "%s (%s)", game_name, GFX_API_NAME);
-	mbstowcs(w_title, title, len + 1);
+    mbstowcs(w_title, title, len + 1);
 
     // Create window
 
@@ -276,7 +276,7 @@ static void gfx_d3d11_dxgi_init(const char *game_name) {
 
     RECT wr = { 0, 0, DESIRED_SCREEN_WIDTH, DESIRED_SCREEN_HEIGHT };
     AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
-    
+
     h_wnd = CreateWindowW(WINCLASS_NAME, w_title, WS_OVERLAPPEDWINDOW,
                           CW_USEDEFAULT, 0, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr,
                           nullptr, nullptr);
@@ -290,7 +290,7 @@ static void gfx_d3d11_dxgi_init(const char *game_name) {
     SetWindowPos(h_wnd, 0, xPos, yPos, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
 
     // Sample description to be used in back buffer and depth buffer
-    
+
     d3d.sample_description.Count = 1;
     d3d.sample_description.Quality = 0;
 
@@ -366,7 +366,7 @@ static void gfx_d3d11_dxgi_init(const char *game_name) {
     constant_buffer_desc.MiscFlags = 0;
 
     ThrowIfFailed(d3d.device->CreateBuffer(&constant_buffer_desc, NULL, d3d.per_frame_cb.GetAddressOf()));
-   
+
     // Initialize some timer values
 
     QueryPerformanceFrequency(&frequency);
@@ -442,7 +442,6 @@ static void gfx_d3d11_dxgi_get_dimensions(uint32_t *width, uint32_t *height) {
 }
 
 static void gfx_d3d11_dxgi_handle_events(void) {
-    
 }
 
 static bool gfx_d3d11_dxgi_start_frame(void) {
@@ -559,7 +558,7 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
     if (cc_features.used_textures[1]) {
         append_line(buf, &len, "    float4 texVal1 = g_texture1.Sample(g_sampler1, input.uv);");
     }
-    
+
     append_str(buf, &len, cc_features.opt_alpha ? "    float4 texel = " : "    float3 texel = ");
     if (!cc_features.color_alpha_same && cc_features.opt_alpha) {
         append_str(buf, &len, "float4(");
@@ -571,7 +570,7 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
         append_formula(buf, &len, cc_features.c, cc_features.do_single[0], cc_features.do_multiply[0], cc_features.do_mix[0], cc_features.opt_alpha, false, cc_features.opt_alpha);
     }
     append_line(buf, &len, ";");
-    
+
     if (cc_features.opt_texture_edge && cc_features.opt_alpha) {
         append_line(buf, &len, "    if (texel.a > 0.3) texel.a = 1.0; else discard;");
     }
@@ -584,10 +583,10 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
         }
     }
 
-    if(cc_features.opt_alpha && cc_features.opt_noise) {
+    if (cc_features.opt_alpha && cc_features.opt_noise) {
         append_line(buf, &len, "    texel.a *= round(random(float3(floor(screenSpace.xy * (240.0 / window_height)), frame_count)));");
     }
-    
+
     if (cc_features.opt_alpha) {
         append_line(buf, &len, "    return texel;");
     } else {
@@ -694,7 +693,7 @@ static D3D11_TEXTURE_ADDRESS_MODE gfx_cm_to_d3d11(uint32_t val) {
 
 static void gfx_d3d11_upload_texture(uint8_t *rgba32_buf, int width, int height) {
     // Create texture
-    
+
     D3D11_TEXTURE2D_DESC texture_desc;
     ZeroMemory(&texture_desc, sizeof(D3D11_TEXTURE2D_DESC));
 
