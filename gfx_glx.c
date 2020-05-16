@@ -17,7 +17,7 @@
 
 #include "configfile.h"
 
-#define GAME_TITLE_NAME "Super Mario 64 PC-port (GLX)"
+#define GFX_API_NAME "GLX - OpenGL"
 
 #ifdef VERSION_EU
 #define FRAME_INTERVAL_US_NUMERATOR 40000
@@ -251,7 +251,7 @@ static bool gfx_glx_check_extension(const char *extensions, const char *extensio
     return false;
 }
 
-static void gfx_glx_init(void) {
+static void gfx_glx_init(const char *game_name) {
     // On NVIDIA proprietary driver, make the driver queue up to two frames on glXSwapBuffers,
     // which means that glXSwapBuffers should be non-blocking,
     // if we are sure to wait at least one vsync interval between calls.
@@ -286,7 +286,10 @@ static void gfx_glx_init(void) {
         gfx_glx_set_fullscreen(true);
     }
 
-    XStoreName(glx.dpy, glx.win, GAME_TITLE_NAME);
+	char title[512];
+    int len = sprintf(title, "%s (%s)", game_name, GFX_API_NAME);
+
+    XStoreName(glx.dpy, glx.win, title);
     GLXContext glc = glXCreateContext(glx.dpy, vi, NULL, GL_TRUE);
     glXMakeCurrent(glx.dpy, glx.win, glc);
     

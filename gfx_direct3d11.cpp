@@ -20,7 +20,7 @@
 #include "gfx_screen_config.h"
 
 #define WINCLASS_NAME L"SUPERMARIO64"
-#define GAME_TITLE_NAME L"Super Mario 64 PC-Port (Direct3D 11)"
+#define GFX_API_NAME "Direct3D 11"
 #define WINDOW_CLIENT_MIN_WIDTH 320
 #define WINDOW_CLIENT_MIN_HEIGHT 240
 #define DEBUG_D3D 0
@@ -245,7 +245,14 @@ LRESULT CALLBACK gfx_d3d11_dxgi_wnd_proc(HWND h_wnd, UINT message, WPARAM w_para
     return 0;
 }
 
-static void gfx_d3d11_dxgi_init(void) {
+static void gfx_d3d11_dxgi_init(const char *game_name) {
+
+    // Prepare window title
+
+	char title[512];
+	wchar_t w_title[512];
+    int len = sprintf(title, "%s (%s)", game_name, GFX_API_NAME);
+	mbstowcs(w_title, title, len + 1);
 
     // Create window
 
@@ -269,8 +276,8 @@ static void gfx_d3d11_dxgi_init(void) {
 
     RECT wr = { 0, 0, DESIRED_SCREEN_WIDTH, DESIRED_SCREEN_HEIGHT };
     AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
-
-    h_wnd = CreateWindowW(WINCLASS_NAME, GAME_TITLE_NAME, WS_OVERLAPPEDWINDOW,
+    
+    h_wnd = CreateWindowW(WINCLASS_NAME, w_title, WS_OVERLAPPEDWINDOW,
                           CW_USEDEFAULT, 0, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr,
                           nullptr, nullptr);
 

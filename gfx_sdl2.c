@@ -22,7 +22,7 @@
 
 #include "configfile.h"
 
-#define GAME_TITLE_NAME "Super Mario 64 PC-Port (OpenGL)"
+#define GFX_API_NAME "SDL2 - OpenGL"
 
 static SDL_Window *wnd;
 static int inverted_scancode_table[512];
@@ -113,7 +113,7 @@ int test_vsync(void) {
         vsync_enabled = 1;
 }
 
-static void gfx_sdl_init(void) {
+static void gfx_sdl_init(const char *game_name) {
     SDL_Init(SDL_INIT_VIDEO);
     
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
@@ -122,7 +122,10 @@ static void gfx_sdl_init(void) {
     //SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
     //SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, 4);
 
-    wnd = SDL_CreateWindow(GAME_TITLE_NAME, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+    char title[512];
+    int len = sprintf(title, "%s (%s)", game_name, GFX_API_NAME);
+
+    wnd = SDL_CreateWindow(title, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
             window_width, window_height, SDL_WINDOW_OPENGL | SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
 
     set_fullscreen(configFullscreen);

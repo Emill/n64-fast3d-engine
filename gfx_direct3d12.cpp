@@ -40,7 +40,7 @@
 #include "gfx_screen_config.h"
 
 #define WINCLASS_NAME L"SUPERMARIO64"
-#define GAME_TITLE_NAME L"Super Mario 64 PC-Port (Direct3D 12)"
+#define GFX_API_NAME "Direct3D 12"
 #define DEBUG_D3D 0
 
 #ifdef VERSION_EU
@@ -799,12 +799,19 @@ LRESULT CALLBACK gfx_dxgi_wnd_proc(HWND h_wnd, UINT message, WPARAM w_param, LPA
     return 0;
 }
 
-static void gfx_dxgi_init(void) {
+static void gfx_dxgi_init(const char *game_name) {
     LARGE_INTEGER qpc_init, qpc_freq;
     QueryPerformanceCounter(&qpc_init);
     QueryPerformanceFrequency(&qpc_freq);
     d3d.qpc_init = qpc_init.QuadPart;
     d3d.qpc_freq = qpc_freq.QuadPart;
+
+    // Prepare window title
+
+	char title[512];
+	wchar_t w_title[512];
+    int len = sprintf(title, "%s (%s)", game_name, GFX_API_NAME);
+	mbstowcs(w_title, title, len + 1);
     
     // Create window
     WNDCLASSEXW wcex;
@@ -827,8 +834,8 @@ static void gfx_dxgi_init(void) {
     
     RECT wr = {0, 0, DESIRED_SCREEN_WIDTH, DESIRED_SCREEN_HEIGHT};
     AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
-    
-    HWND h_wnd = CreateWindowW(WINCLASS_NAME, GAME_TITLE_NAME, WS_OVERLAPPEDWINDOW,
+
+    HWND h_wnd = CreateWindowW(WINCLASS_NAME, w_title, WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, 0, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr, nullptr, nullptr);
     
     // Create device
