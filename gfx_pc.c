@@ -304,6 +304,12 @@ static void import_texture_rgba16(int tile) {
     gfx_rapi->upload_texture(rgba32_buf, width, height);
 }
 
+static void import_texture_rgba32(int tile) {
+    uint32_t width = rdp.texture_tile.line_size_bytes / 2;
+    uint32_t height = (rdp.loaded_texture[tile].size_bytes / 2) / rdp.texture_tile.line_size_bytes;
+    gfx_rapi->upload_texture(rdp.loaded_texture[tile].addr, width, height);
+}
+
 static void import_texture_ia4(int tile) {
     uint8_t rgba32_buf[32768];
     
@@ -426,6 +432,8 @@ static void import_texture(int tile) {
     if (fmt == G_IM_FMT_RGBA) {
         if (siz == G_IM_SIZ_16b) {
             import_texture_rgba16(tile);
+        } else if (siz == G_IM_SIZ_32b) {
+            import_texture_rgba32(tile);
         } else {
             abort();
         }
@@ -966,7 +974,6 @@ static void gfx_dp_set_texture_image(uint32_t format, uint32_t size, uint32_t wi
 }
 
 static void gfx_dp_set_tile(uint8_t fmt, uint32_t siz, uint32_t line, uint32_t tmem, uint8_t tile, uint32_t palette, uint32_t cmt, uint32_t maskt, uint32_t shiftt, uint32_t cms, uint32_t masks, uint32_t shifts) {
-    SUPPORT_CHECK(siz != G_IM_SIZ_32b);
     
     if (tile == G_TX_RENDERTILE) {
         SUPPORT_CHECK(palette == 0); // palette should set upper 4 bits of color index in 4b mode
