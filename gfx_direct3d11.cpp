@@ -2,13 +2,15 @@
 
 #if defined(_WIN32) || defined(_WIN64)
 
-#include <stdio.h>
+#include <cstdio>
 #include <vector>
 #include <cmath>
 
 #include <windows.h>
+#include <versionhelpers.h>
 #include <wrl/client.h>
 
+#include <dxgi1_3.h>
 #include <d3d11.h>
 #include <d3dcompiler.h>
 
@@ -53,7 +55,8 @@ struct ShaderProgram {
 static struct {
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context;
-    ComPtr<IDXGISwapChain> swap_chain;
+    ComPtr<IDXGISwapChain> swap_chain;   // For Windows versions older than 8.1
+    ComPtr<IDXGISwapChain2> swap_chain2; // For Windows version 8.1 or newer
     ComPtr<ID3D11RenderTargetView> backbuffer_view;
     ComPtr<ID3D11DepthStencilView> depth_stencil_view;
     ComPtr<ID3D11RasterizerState> rasterizer_state;
@@ -64,6 +67,8 @@ static struct {
 #if DEBUG_D3D
     ComPtr<ID3D11Debug> debug;
 #endif
+
+    HANDLE frame_latency_waitable_object;
 
     DXGI_SAMPLE_DESC sample_description;
 
@@ -104,16 +109,57 @@ static struct {
 } d3d;
 
 static HWND h_wnd;
+static bool lower_latency;
 static LARGE_INTEGER last_time, accumulated_time, frequency;
 static uint8_t sync_interval;
+static RECT last_window_rect;
+static bool is_full_screen, last_maximized_state;
 
-// static void SetDebugNameFormatted(ID3D11DeviceChild *device_child, char *format, uint32_t value) {
-// #if DEBUG_D3D
-//     char debug_name[128];
-//     int length = sprintf(debug_name, format, value);
-//     ThrowIfFailed(device_child->SetPrivateData(WKPDID_D3DDebugObjectName, length, debug_name));
-// #endif
-// }
+static void toggle_borderless_window_full_screen() {
+    int screen_width = GetSystemMetrics(SM_CXSCREEN);
+    int screen_height = GetSystemMetrics(SM_CYSCREEN);
+
+    if (is_full_screen) {
+        RECT r = last_window_rect;
+
+        // Set in window mode with the last saved position and size
+        SetWindowLongPtr(h_wnd, GWL_STYLE, WS_VISIBLE | WS_OVERLAPPEDWINDOW);
+
+        if (last_maximized_state) {
+            SetWindowPos(h_wnd, NULL, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE);
+            ShowWindow(h_wnd, SW_MAXIMIZE);
+        } else {
+            SetWindowPos(h_wnd, NULL, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_FRAMECHANGED);
+            ShowWindow(h_wnd, SW_RESTORE);
+        }
+
+        is_full_screen = false;
+    } else {
+        // Save if window is maximized or not
+        WINDOWPLACEMENT window_placement;
+        window_placement.length = sizeof(WINDOWPLACEMENT);
+        GetWindowPlacement(h_wnd, &window_placement);
+        last_maximized_state = window_placement.showCmd == SW_SHOWMAXIMIZED;
+
+        // Save window position and size if the window is not maximized
+        GetWindowRect(h_wnd, &last_window_rect);
+
+        // Get in which monitor the window is
+        HMONITOR h_monitor = MonitorFromWindow(h_wnd, MONITOR_DEFAULTTONEAREST);
+
+        // Get info from that monitor
+        MONITORINFOEX monitor_info;
+        monitor_info.cbSize = sizeof(MONITORINFOEX);
+        GetMonitorInfo(h_monitor, &monitor_info);
+        RECT r = monitor_info.rcMonitor;
+
+        // Set borderless full screen to that monitor
+        SetWindowLongPtr(h_wnd, GWL_STYLE, WS_VISIBLE | WS_POPUP);
+        SetWindowPos(h_wnd, HWND_TOP, r.left, r.top, r.right - r.left, r.bottom - r.top, SWP_FRAMECHANGED);
+
+        is_full_screen = true;
+    }
+}
 
 static void create_render_target_views(uint32_t width, uint32_t height) {
     if (width == 0 || height == 0) {
@@ -130,13 +176,29 @@ static void create_render_target_views(uint32_t width, uint32_t height) {
 
     // Resize swap chain
 
-    ThrowIfFailed(d3d.swap_chain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0));
+    if (lower_latency) {
+        UINT swap_chain_flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+        ThrowIfFailed(d3d.swap_chain2->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, swap_chain_flags),
+                      h_wnd, "Failed to resize IDXGISwapChain2 buffers.");
+    } else {
+        UINT swap_chain_flags = 0;
+        ThrowIfFailed(d3d.swap_chain->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, swap_chain_flags),
+                      h_wnd, "Failed to resize IDXGISwapChain buffers.");
+    }
 
     // Create back buffer
 
     ComPtr<ID3D11Texture2D> backbuffer_texture;
-    ThrowIfFailed(d3d.swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID *) backbuffer_texture.GetAddressOf()));
-    ThrowIfFailed(d3d.device->CreateRenderTargetView(backbuffer_texture.Get(), NULL, d3d.backbuffer_view.GetAddressOf()));
+    if (lower_latency) {
+        ThrowIfFailed(d3d.swap_chain2->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID *) backbuffer_texture.GetAddressOf()),
+                      h_wnd, "Failed to get backbuffer from IDXGISwapChain2.");
+    } else {
+        ThrowIfFailed(d3d.swap_chain->GetBuffer(0, __uuidof(ID3D11Texture2D), (LPVOID *) backbuffer_texture.GetAddressOf()),
+                      h_wnd, "Failed to get backbuffer from IDXGISwapChain.");
+    }
+
+    ThrowIfFailed(d3d.device->CreateRenderTargetView(backbuffer_texture.Get(), NULL, d3d.backbuffer_view.GetAddressOf()),
+                  h_wnd, "Failed to create render target view.");
 
     // Create depth buffer
 
@@ -158,10 +220,6 @@ static void create_render_target_views(uint32_t width, uint32_t height) {
     ThrowIfFailed(d3d.device->CreateTexture2D(&depth_stencil_texture_desc, NULL, depth_stencil_texture.GetAddressOf()));
     ThrowIfFailed(d3d.device->CreateDepthStencilView(depth_stencil_texture.Get(), NULL, d3d.depth_stencil_view.GetAddressOf()));
 
-    // Set render targets
-
-    d3d.context->OMSetRenderTargets(1, d3d.backbuffer_view.GetAddressOf(), d3d.depth_stencil_view.Get());
-
     // Save resolution
 
     d3d.current_width = width;
@@ -169,14 +227,11 @@ static void create_render_target_views(uint32_t width, uint32_t height) {
 }
 
 static void calculate_sync_interval() {
-    ComPtr<IDXGIOutput> output;
-    ThrowIfFailed(d3d.swap_chain.Get()->GetContainingOutput(output.GetAddressOf()));
-    DXGI_OUTPUT_DESC output_desc;
-    ThrowIfFailed(output->GetDesc(&output_desc));
+    HMONITOR h_monitor = MonitorFromWindow(h_wnd, MONITOR_DEFAULTTONEAREST);
 
     MONITORINFOEX monitor_info;
     monitor_info.cbSize = sizeof(MONITORINFOEX);
-    GetMonitorInfo(output_desc.Monitor, &monitor_info);
+    GetMonitorInfo(h_monitor, &monitor_info);
 
     DEVMODE dev_mode;
     dev_mode.dmSize = sizeof(DEVMODE);
@@ -225,10 +280,19 @@ LRESULT CALLBACK gfx_d3d11_dxgi_wnd_proc(HWND h_wnd, UINT message, WPARAM w_para
             d3d.debug->ReportLiveDeviceObjects(D3D11_RLDO_DETAIL);
 #endif
             exit(0);
+            break;
         }
         case WM_ACTIVATEAPP: {
             keyboard_on_all_keys_up();
             break;
+        }
+        case WM_SYSKEYDOWN: {
+            if ((w_param == VK_RETURN) && ((l_param & 1 << 30) == 0)) {
+                toggle_borderless_window_full_screen();
+                break;
+            } else {
+                return DefWindowProcW(h_wnd, message, w_param, l_param);
+            }
         }
         case WM_KEYDOWN: {
             keyboard_on_key_down((l_param >> 16) & 0x1ff);
@@ -281,6 +345,8 @@ static void gfx_d3d11_dxgi_init(const char *game_name) {
                           CW_USEDEFAULT, 0, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr,
                           nullptr, nullptr);
 
+    is_full_screen = false;
+
     // Center window
 
     int screen_width = GetSystemMetrics(SM_CXSCREEN);
@@ -289,29 +355,11 @@ static void gfx_d3d11_dxgi_init(const char *game_name) {
     int yPos = (screen_height - wr.bottom) * 0.5;
     SetWindowPos(h_wnd, 0, xPos, yPos, 0, 0, SWP_NOZORDER | SWP_NOSIZE);
 
-    // Sample description to be used in back buffer and depth buffer
+    // Check if a lower latency flip model can be used
 
-    d3d.sample_description.Count = 1;
-    d3d.sample_description.Quality = 0;
+    lower_latency = IsWindows8Point1OrGreater();
 
-    // Create swap chain description
-
-    DXGI_SWAP_CHAIN_DESC swap_chain_description;
-    ZeroMemory(&swap_chain_description, sizeof(DXGI_SWAP_CHAIN_DESC));
-
-    swap_chain_description.BufferCount = 1;
-    swap_chain_description.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-    swap_chain_description.BufferDesc.Height = DESIRED_SCREEN_HEIGHT;
-    swap_chain_description.BufferDesc.Width = DESIRED_SCREEN_WIDTH;
-    swap_chain_description.BufferDesc.RefreshRate.Numerator = 0;
-    swap_chain_description.BufferDesc.RefreshRate.Denominator = 1;
-    swap_chain_description.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-    swap_chain_description.OutputWindow = h_wnd;
-    swap_chain_description.SampleDesc = d3d.sample_description;
-    swap_chain_description.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
-    swap_chain_description.Windowed = TRUE;
-
-    // Create device and swap chain
+    // Create D3D11 device
 
 #if DEBUG_D3D
     UINT device_creation_flags = D3D11_CREATE_DEVICE_DEBUG;
@@ -319,7 +367,7 @@ static void gfx_d3d11_dxgi_init(const char *game_name) {
     UINT device_creation_flags = 0;
 #endif
 
-    ThrowIfFailed(D3D11CreateDeviceAndSwapChain(
+    ThrowIfFailed(D3D11CreateDevice(
         nullptr,
         D3D_DRIVER_TYPE_HARDWARE,
         nullptr,
@@ -327,14 +375,122 @@ static void gfx_d3d11_dxgi_init(const char *game_name) {
         nullptr,
         0,
         D3D11_SDK_VERSION,
-        &swap_chain_description,
-        d3d.swap_chain.GetAddressOf(),
         d3d.device.GetAddressOf(),
-        nullptr,
-        d3d.context.GetAddressOf()));
+        NULL,
+        d3d.context.GetAddressOf()),
+        h_wnd, "Failed to create D3D11 device.");
+
+    // Sample description to be used in back buffer and depth buffer
+
+    d3d.sample_description.Count = 1;
+    d3d.sample_description.Quality = 0;
+
+    // Create the swap chain
+
+    if (lower_latency) {
+
+        // Create swap chain description
+
+        DXGI_SWAP_CHAIN_DESC1 swap_chain_desc1;
+        ZeroMemory(&swap_chain_desc1, sizeof(DXGI_SWAP_CHAIN_DESC));
+
+        swap_chain_desc1.Width = DESIRED_SCREEN_WIDTH;
+        swap_chain_desc1.Height = DESIRED_SCREEN_HEIGHT;
+        swap_chain_desc1.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        swap_chain_desc1.Stereo = FALSE;
+        swap_chain_desc1.SampleDesc = d3d.sample_description;
+        swap_chain_desc1.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        swap_chain_desc1.BufferCount = 2;
+        swap_chain_desc1.Scaling = DXGI_SCALING_STRETCH;
+        swap_chain_desc1.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+        swap_chain_desc1.AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED;
+        swap_chain_desc1.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+
+        // Create DXGI Factory
+
+        ComPtr<IDXGIDevice2> dxgi_device2;
+        ThrowIfFailed(d3d.device.Get()->QueryInterface(__uuidof(IDXGIDevice2), (void **) dxgi_device2.GetAddressOf()),
+                      h_wnd, "Failed to get IDXGIDevice2.");
+
+        ComPtr<IDXGIAdapter> dxgi_adapter;
+        ThrowIfFailed(dxgi_device2.Get()->GetAdapter(dxgi_adapter.GetAddressOf()),
+                      h_wnd, "Failed to get IDXGIAdapter.");
+
+        ComPtr<IDXGIFactory2> dxgi_factory2;
+        ThrowIfFailed(dxgi_adapter.Get()->GetParent(__uuidof(IDXGIFactory2), (void **) dxgi_factory2.GetAddressOf()),
+                      h_wnd, "Failed to get IDXGIFactory2.");
+
+        // Create Swap Chain
+
+        ComPtr<IDXGISwapChain1> swap_chain1;
+        ThrowIfFailed(dxgi_factory2.Get()->CreateSwapChainForHwnd(d3d.device.Get(), h_wnd, &swap_chain_desc1, NULL, NULL, swap_chain1.GetAddressOf()),
+                      h_wnd, "Failed to create IDXGISwapChain1.");
+
+        ThrowIfFailed(swap_chain1.As(&d3d.swap_chain2),
+                      h_wnd, "Failed to get IDXGISwapChain2 from IDXGISwapChain1.");
+
+        ThrowIfFailed(d3d.swap_chain2.Get()->SetMaximumFrameLatency(1),
+                      h_wnd, "Failed to Set Maximum Frame Latency to 1.");
+
+        d3d.frame_latency_waitable_object = d3d.swap_chain2.Get()->GetFrameLatencyWaitableObject();
+
+        // Prevent DXGI from intercepting Alt+Enter
+
+        ThrowIfFailed(dxgi_factory2.Get()->MakeWindowAssociation(h_wnd, DXGI_MWA_NO_WINDOW_CHANGES | DXGI_MWA_NO_ALT_ENTER),
+                      h_wnd, "Failed to call MakeWindowAssociation.");
+
+    } else {
+
+        // Create swap chain description
+
+        DXGI_SWAP_CHAIN_DESC swap_chain_desc;
+        ZeroMemory(&swap_chain_desc, sizeof(DXGI_SWAP_CHAIN_DESC));
+
+        swap_chain_desc.BufferDesc.Width = DESIRED_SCREEN_WIDTH;
+        swap_chain_desc.BufferDesc.Height = DESIRED_SCREEN_HEIGHT;
+        swap_chain_desc.BufferDesc.RefreshRate.Numerator = 0;
+        swap_chain_desc.BufferDesc.RefreshRate.Denominator = 1;
+        swap_chain_desc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        swap_chain_desc.BufferDesc.ScanlineOrdering = DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED;
+        swap_chain_desc.BufferDesc.Scaling = DXGI_MODE_SCALING_UNSPECIFIED;
+        swap_chain_desc.SampleDesc = d3d.sample_description;
+        swap_chain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        swap_chain_desc.BufferCount = 1;
+        swap_chain_desc.OutputWindow = h_wnd;
+        swap_chain_desc.Windowed = TRUE;
+        swap_chain_desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+        swap_chain_desc.Flags = 0;
+
+        // Create DXGI Factory
+
+        ComPtr<IDXGIDevice> dxgi_device;
+        ThrowIfFailed(d3d.device.Get()->QueryInterface(__uuidof(IDXGIDevice), (void **) dxgi_device.GetAddressOf()),
+                      h_wnd, "Failed to get IDXGIDevice.");
+
+        ComPtr<IDXGIAdapter> dxgi_adapter;
+        ThrowIfFailed(dxgi_device.Get()->GetAdapter(dxgi_adapter.GetAddressOf()),
+                      h_wnd, "Failed to get IDXGIAdapter.");
+
+        ComPtr<IDXGIFactory> dxgi_factory;
+        ThrowIfFailed(dxgi_adapter.Get()->GetParent(__uuidof(IDXGIFactory), (void **) dxgi_factory.GetAddressOf()),
+                      h_wnd, "Failed to get IDXGIFactory.");
+
+        // Create Swap Chain
+
+        ThrowIfFailed(dxgi_factory.Get()->CreateSwapChain(d3d.device.Get(), &swap_chain_desc, d3d.swap_chain.GetAddressOf()),
+                      h_wnd, "Failed to create IDXGISwapChain.");
+
+        // Prevent DXGI from intercepting Alt+Enter
+
+        ThrowIfFailed(dxgi_factory.Get()->MakeWindowAssociation(h_wnd, DXGI_MWA_NO_WINDOW_CHANGES | DXGI_MWA_NO_ALT_ENTER),
+                      h_wnd, "Failed to call MakeWindowAssociation.");
+    }
+
+    // Create D3D Debug device if in debug mode
 
 #if DEBUG_D3D
-    ThrowIfFailed(d3d.device->QueryInterface(__uuidof(ID3D11Debug), (void **) (d3d.debug.GetAddressOf())));
+    ThrowIfFailed(d3d.device->QueryInterface(__uuidof(ID3D11Debug), (void **) d3d.debug.GetAddressOf()),
+                  h_wnd, "Failed to get ID3D11Debug device.");
 #endif
 
     // Create views
@@ -352,7 +508,8 @@ static void gfx_d3d11_dxgi_init(const char *game_name) {
     vertex_buffer_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     vertex_buffer_desc.MiscFlags = 0;
 
-    ThrowIfFailed(d3d.device->CreateBuffer(&vertex_buffer_desc, NULL, d3d.vertex_buffer.GetAddressOf()));
+    ThrowIfFailed(d3d.device->CreateBuffer(&vertex_buffer_desc, NULL, d3d.vertex_buffer.GetAddressOf()),
+                  h_wnd, "Failed to create vertex buffer.");
 
     // Create constant buffer
 
@@ -365,7 +522,8 @@ static void gfx_d3d11_dxgi_init(const char *game_name) {
     constant_buffer_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
     constant_buffer_desc.MiscFlags = 0;
 
-    ThrowIfFailed(d3d.device->CreateBuffer(&constant_buffer_desc, NULL, d3d.per_frame_cb.GetAddressOf()));
+    ThrowIfFailed(d3d.device->CreateBuffer(&constant_buffer_desc, NULL, d3d.per_frame_cb.GetAddressOf()),
+                  h_wnd, "Failed to create per-frame constant buffer.");
 
     // Initialize some timer values
 
@@ -421,18 +579,36 @@ static void gfx_d3d11_dxgi_main_loop(void (*run_one_game_iter)(void)) {
         if (accumulated_time.QuadPart >= FRAME_TIME) {
             accumulated_time.QuadPart %= FRAME_TIME;
 
+            if (lower_latency) {
+                WaitForSingleObjectEx(d3d.frame_latency_waitable_object, 1000, true);
+            }
+
             if (d3d.run_one_game_iter != nullptr) {
                 d3d.run_one_game_iter();
             }
-            d3d.swap_chain->Present(1, 0);
+
+            if (lower_latency) {
+                d3d.swap_chain2->Present(1, 0);
+            } else {
+                d3d.swap_chain->Present(1, 0);
+            }
         } else {
             Sleep(1);
         }
     } else {
+        if (lower_latency) {
+            WaitForSingleObjectEx(d3d.frame_latency_waitable_object, 1000, true);
+        }
+
         if (d3d.run_one_game_iter != nullptr) {
             d3d.run_one_game_iter();
         }
-        d3d.swap_chain->Present(sync_interval, 0);
+
+        if (lower_latency) {
+            d3d.swap_chain2->Present(sync_interval, 0);
+        } else {
+            d3d.swap_chain->Present(sync_interval, 0);
+        }
     }
 }
 
@@ -883,6 +1059,10 @@ static void gfx_d3d11_init(void) {
 }
 
 static void gfx_d3d11_start_frame(void) {
+    // Set render targets
+
+    d3d.context->OMSetRenderTargets(1, d3d.backbuffer_view.GetAddressOf(), d3d.depth_stencil_view.Get());
+
     // Clear render targets
 
     const float clearColor[] = { 0.0f, 0.0f, 0.0f, 1.0f };
