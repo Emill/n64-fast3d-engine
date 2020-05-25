@@ -1,10 +1,21 @@
 #if defined(ENABLE_DX11) || defined(ENABLE_DX12)
 
+#include <cstdio>
+
 #include "gfx_direct3d_common.h"
 #include "gfx_cc.h"
 
 void ThrowIfFailed(HRESULT res) {
     if (FAILED(res)) {
+        throw res;
+    }
+}
+
+void ThrowIfFailed(HRESULT res, HWND h_wnd, const char *message) {
+    if (FAILED(res)) {
+        char full_message[256];
+        sprintf(full_message, "%s\n\nHRESULT: 0x%08X", message, res);
+        MessageBox(h_wnd, full_message, "Error", MB_OK | MB_ICONERROR);
         throw res;
     }
 }
@@ -62,6 +73,7 @@ void append_line(char *buf, size_t *len, const char *str) {
 const char *shader_item_to_str(uint32_t item, bool with_alpha, bool only_alpha, bool inputs_have_alpha, bool hint_single_element) {
     if (!only_alpha) {
         switch (item) {
+            default:
             case SHADER_0:
                 return with_alpha ? "float4(0.0, 0.0, 0.0, 0.0)" : "float3(0.0, 0.0, 0.0)";
             case SHADER_INPUT_1:
@@ -81,6 +93,7 @@ const char *shader_item_to_str(uint32_t item, bool with_alpha, bool only_alpha, 
         }
     } else {
         switch (item) {
+            default:
             case SHADER_0:
                 return "0.0";
             case SHADER_INPUT_1:

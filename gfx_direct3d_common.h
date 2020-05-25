@@ -21,6 +21,7 @@ struct CCFeatures {
 };
 
 void ThrowIfFailed(HRESULT res);
+void ThrowIfFailed(HRESULT res, HWND h_wnd, const char *message);
 void get_cc_features(uint32_t shader_id, CCFeatures *shader_features);
 void append_str(char *buf, size_t *len, const char *str);
 void append_line(char *buf, size_t *len, const char *str);

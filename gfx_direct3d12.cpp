@@ -812,7 +812,7 @@ static void gfx_dxgi_init(const char *game_name) {
     wchar_t w_title[512];
     int len = sprintf(title, "%s (%s)", game_name, GFX_API_NAME);
     mbstowcs(w_title, title, len + 1);
-    
+
     // Create window
     WNDCLASSEXW wcex;
 
@@ -831,13 +831,13 @@ static void gfx_dxgi_init(const char *game_name) {
     wcex.hIconSm        = nullptr;
 
     ATOM winclass = RegisterClassExW(&wcex);
-    
+
     RECT wr = {0, 0, DESIRED_SCREEN_WIDTH, DESIRED_SCREEN_HEIGHT};
     AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
 
     HWND h_wnd = CreateWindowW(WINCLASS_NAME, w_title, WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, 0, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr, nullptr, nullptr);
-    
+
     // Create device
     {
         UINT debug_flags = 0;
