@@ -116,9 +116,6 @@ static RECT last_window_rect;
 static bool is_full_screen, last_maximized_state;
 
 static void toggle_borderless_window_full_screen() {
-    int screen_width = GetSystemMetrics(SM_CXSCREEN);
-    int screen_height = GetSystemMetrics(SM_CYSCREEN);
-
     if (is_full_screen) {
         RECT r = last_window_rect;
 
@@ -392,7 +389,7 @@ static void gfx_d3d11_dxgi_init(const char *game_name) {
         // Create swap chain description
 
         DXGI_SWAP_CHAIN_DESC1 swap_chain_desc1;
-        ZeroMemory(&swap_chain_desc1, sizeof(DXGI_SWAP_CHAIN_DESC));
+        ZeroMemory(&swap_chain_desc1, sizeof(DXGI_SWAP_CHAIN_DESC1));
 
         swap_chain_desc1.Width = DESIRED_SCREEN_WIDTH;
         swap_chain_desc1.Height = DESIRED_SCREEN_HEIGHT;
@@ -667,7 +664,7 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
         append_line(buf, &len, "    float4 fog : FOG;");
         num_floats += 4;
     }
-    for (int i = 0; i < cc_features.num_inputs; i++) {
+    for (uint32_t i = 0; i < cc_features.num_inputs; i++) {
         len += sprintf(buf + len, "    float%d input%d : INPUT%d;\r\n", cc_features.opt_alpha ? 4 : 3, i + 1, i);
         num_floats += cc_features.opt_alpha ? 4 : 3;
     }
@@ -707,7 +704,7 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
     if (cc_features.opt_fog) {
         append_str(buf, &len, ", float4 fog : FOG");
     }
-    for (int i = 0; i < cc_features.num_inputs; i++) {
+    for (uint32_t i = 0; i < cc_features.num_inputs; i++) {
         len += sprintf(buf + len, ", float%d input%d : INPUT%d", cc_features.opt_alpha ? 4 : 3, i + 1, i);
     }
     append_line(buf, &len, ") {");
@@ -719,7 +716,7 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
     if (cc_features.opt_fog) {
         append_line(buf, &len, "    result.fog = fog;");
     }
-    for (int i = 0; i < cc_features.num_inputs; i++) {
+    for (uint32_t i = 0; i < cc_features.num_inputs; i++) {
         len += sprintf(buf + len, "    result.input%d = input%d;\r\n", i + 1, i + 1);
     }
     append_line(buf, &len, "    return result;");
