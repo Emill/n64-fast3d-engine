@@ -224,7 +224,8 @@ static void create_render_target_views(uint32_t width, uint32_t height) {
 }
 
 static void calculate_sync_interval() {
-    HMONITOR h_monitor = MonitorFromWindow(h_wnd, MONITOR_DEFAULTTONEAREST);
+    const POINT ptZero = { 0, 0 };
+    HMONITOR h_monitor = MonitorFromPoint(ptZero, MONITOR_DEFAULTTOPRIMARY);
 
     MONITORINFOEX monitor_info;
     monitor_info.cbSize = sizeof(MONITORINFOEX);
