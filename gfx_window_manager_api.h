@@ -5,7 +5,7 @@
 #include <stdbool.h>
 
 struct GfxWindowManagerAPI {
-    void (*init)(void);
+    void (*init)(const char *game_name);
     void (*main_loop)(void (*run_one_game_iter)(void));
     void (*get_dimensions)(uint32_t *width, uint32_t *height);
     void (*handle_events)(void);

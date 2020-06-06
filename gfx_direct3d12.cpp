@@ -1,6 +1,5 @@
 #ifdef ENABLE_DX12
 
-#include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
 #include <math.h>
@@ -36,11 +35,12 @@
 #include "gfx_cc.h"
 #include "gfx_window_manager_api.h"
 #include "gfx_rendering_api.h"
+#include "gfx_direct3d_common.h"
 
 #include "gfx_screen_config.h"
 
 #define WINCLASS_NAME L"SUPERMARIO64"
-
+#define GFX_API_NAME "Direct3D 12"
 #define DEBUG_D3D 0
 
 #ifdef VERSION_EU
@@ -173,16 +173,10 @@ static struct {
 static int texture_uploads = 0;
 static int max_texture_uploads;
 
-static void ThrowIfFailed(HRESULT res) {
-    if (FAILED(res)) {
-        throw res;
-    }
-}
-
 static D3D12_CPU_DESCRIPTOR_HANDLE get_cpu_descriptor_handle(ComPtr<ID3D12DescriptorHeap>& heap) {
 #if __MINGW32__
     // We would like to do this:
-	// D3D12_CPU_DESCRIPTOR_HANDLE handle = heap->GetCPUDescriptorHandleForHeapStart();
+    // D3D12_CPU_DESCRIPTOR_HANDLE handle = heap->GetCPUDescriptorHandleForHeapStart();
     // but MinGW64 doesn't follow the calling conventions of VC++ for some reason.
     // Per MS documentation "User-defined types can be returned by value from global functions and static member functions"...
     // "Otherwise, the caller assumes the responsibility of allocating memory and passing a pointer for the return value as the first argument".
@@ -237,86 +231,6 @@ static void gfx_direct3d12_load_shader(struct ShaderProgram *new_prg) {
     d3d.must_reload_pipeline = true;
 }
 
-static void append_str(char *buf, size_t *len, const char *str) {
-    while (*str != '\0') buf[(*len)++] = *str++;
-}
-
-static void append_line(char *buf, size_t *len, const char *str) {
-    while (*str != '\0') buf[(*len)++] = *str++;
-    buf[(*len)++] = '\r';
-    buf[(*len)++] = '\n';
-}
-
-static const char *shader_item_to_str(uint32_t item, bool with_alpha, bool only_alpha, bool inputs_have_alpha, bool hint_single_element) {
-    if (!only_alpha) {
-        switch (item) {
-            case SHADER_0:
-                return with_alpha ? "float4(0.0, 0.0, 0.0, 0.0)" : "float3(0.0, 0.0, 0.0)";
-            case SHADER_INPUT_1:
-                return with_alpha || !inputs_have_alpha ? "input.input1" : "input.input1.rgb";
-            case SHADER_INPUT_2:
-                return with_alpha || !inputs_have_alpha ? "input.input2" : "input.input2.rgb";
-            case SHADER_INPUT_3:
-                return with_alpha || !inputs_have_alpha ? "input.input3" : "input.input3.rgb";
-            case SHADER_INPUT_4:
-                return with_alpha || !inputs_have_alpha ? "input.input4" : "input.input4.rgb";
-            case SHADER_TEXEL0:
-                return with_alpha ? "texVal0" : "texVal0.rgb";
-            case SHADER_TEXEL0A:
-                return hint_single_element ? "texVal0.a" :
-                    (with_alpha ? "vec4(texelVal0.a, texelVal0.a, texelVal0.a, texelVal0.a)" : "float3(texelVal0.a, texelVal0.a, texelVal0.a)");
-            case SHADER_TEXEL1:
-                return with_alpha ? "texVal1" : "texVal1.rgb";
-        }
-    } else {
-        switch (item) {
-            case SHADER_0:
-                return "0.0";
-            case SHADER_INPUT_1:
-                return "input.input1.a";
-            case SHADER_INPUT_2:
-                return "input.input2.a";
-            case SHADER_INPUT_3:
-                return "input.input3.a";
-            case SHADER_INPUT_4:
-                return "input.input4.a";
-            case SHADER_TEXEL0:
-                return "texVal0.a";
-            case SHADER_TEXEL0A:
-                return "texVal0.a";
-            case SHADER_TEXEL1:
-                return "texVal1.a";
-        }
-    }
-}
-
-static void append_formula(char *buf, size_t *len, uint8_t c[2][4], bool do_single, bool do_multiply, bool do_mix, bool with_alpha, bool only_alpha, bool opt_alpha) {
-    if (do_single) {
-        append_str(buf, len, shader_item_to_str(c[only_alpha][3], with_alpha, only_alpha, opt_alpha, false));
-    } else if (do_multiply) {
-        append_str(buf, len, shader_item_to_str(c[only_alpha][0], with_alpha, only_alpha, opt_alpha, false));
-        append_str(buf, len, " * ");
-        append_str(buf, len, shader_item_to_str(c[only_alpha][2], with_alpha, only_alpha, opt_alpha, true));
-    } else if (do_mix) {
-        append_str(buf, len, "lerp(");
-        append_str(buf, len, shader_item_to_str(c[only_alpha][1], with_alpha, only_alpha, opt_alpha, false));
-        append_str(buf, len, ", ");
-        append_str(buf, len, shader_item_to_str(c[only_alpha][0], with_alpha, only_alpha, opt_alpha, false));
-        append_str(buf, len, ", ");
-        append_str(buf, len, shader_item_to_str(c[only_alpha][2], with_alpha, only_alpha, opt_alpha, true));
-        append_str(buf, len, ")");
-    } else {
-        append_str(buf, len, "(");
-        append_str(buf, len, shader_item_to_str(c[only_alpha][0], with_alpha, only_alpha, opt_alpha, false));
-        append_str(buf, len, " - ");
-        append_str(buf, len, shader_item_to_str(c[only_alpha][1], with_alpha, only_alpha, opt_alpha, false));
-        append_str(buf, len, ") * ");
-        append_str(buf, len, shader_item_to_str(c[only_alpha][2], with_alpha, only_alpha, opt_alpha, true));
-        append_str(buf, len, " + ");
-        append_str(buf, len, shader_item_to_str(c[only_alpha][3], with_alpha, only_alpha, opt_alpha, false));
-    }
-}
-
 static struct ShaderProgram *gfx_direct3d12_create_and_load_new_shader(uint32_t shader_id) {
     /*static FILE *fp;
     if (!fp) {
@@ -326,46 +240,20 @@ static struct ShaderProgram *gfx_direct3d12_create_and_load_new_shader(uint32_t 
     fflush(fp);*/
     
     struct ShaderProgram *prg = &d3d.shader_program_pool[d3d.shader_program_pool_size++];
-    uint8_t c[2][4];
-    for (int i = 0; i < 4; i++) {
-        c[0][i] = (shader_id >> (i * 3)) & 7;
-        c[1][i] = (shader_id >> (12 + i * 3)) & 7;
-    }
-    bool opt_alpha = (shader_id & SHADER_OPT_ALPHA) != 0;
-    bool opt_fog = (shader_id & SHADER_OPT_FOG) != 0;
-    bool opt_texture_edge = (shader_id & SHADER_OPT_TEXTURE_EDGE) != 0;
-    bool used_textures[2] = {0, 0};
-    int num_inputs = 0;
-    for (int i = 0; i < 2; i++) {
-        for (int j = 0; j < 4; j++) {
-            if (c[i][j] >= SHADER_INPUT_1 && c[i][j] <= SHADER_INPUT_4) {
-                if (c[i][j] > num_inputs) {
-                    num_inputs = c[i][j];
-                }
-            }
-            if (c[i][j] == SHADER_TEXEL0 || c[i][j] == SHADER_TEXEL0A) {
-                used_textures[0] = true;
-            }
-            if (c[i][j] == SHADER_TEXEL1) {
-                used_textures[1] = true;
-            }
-        }
-    }
-    bool do_single[2] = {c[0][2] == 0, c[1][2] == 0};
-    bool do_multiply[2] = {c[0][1] == 0 && c[0][3] == 0, c[1][1] == 0 && c[1][3] == 0};
-    bool do_mix[2] = {c[0][1] == c[0][3], c[1][1] == c[1][3]};
-    bool color_alpha_same = (shader_id & 0xfff) == ((shader_id >> 12) & 0xfff);
+    
+    CCFeatures cc_features;
+    get_cc_features(shader_id, &cc_features);
     
     char buf[2048];
     size_t len = 0;
     size_t num_floats = 4;
     
     append_str(buf, &len, "#define RS \"RootFlags(ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT | DENY_VERTEX_SHADER_ROOT_ACCESS)");
-    if (used_textures[0]) {
+    if (cc_features.used_textures[0]) {
         append_str(buf, &len, ",DescriptorTable(SRV(t0), visibility = SHADER_VISIBILITY_PIXEL)");
         append_str(buf, &len, ",DescriptorTable(Sampler(s0), visibility = SHADER_VISIBILITY_PIXEL)");
     }
-    if (used_textures[1]) {
+    if (cc_features.used_textures[1]) {
         append_str(buf, &len, ",DescriptorTable(SRV(t1), visibility = SHADER_VISIBILITY_PIXEL)");
         append_str(buf, &len, ",DescriptorTable(Sampler(s1), visibility = SHADER_VISIBILITY_PIXEL)");
     }
@@ -373,50 +261,50 @@ static struct ShaderProgram *gfx_direct3d12_create_and_load_new_shader(uint32_t 
     
     append_line(buf, &len, "struct PSInput {");
     append_line(buf, &len, "float4 position : SV_POSITION;");
-    if (used_textures[0] || used_textures[1]) {
+    if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
         append_line(buf, &len, "float2 uv : TEXCOORD;");
         num_floats += 2;
     }
-    if (opt_fog) {
+    if (cc_features.opt_fog) {
         append_line(buf, &len, "float4 fog : FOG;");
         num_floats += 4;
     }
-    for (int i = 0; i < num_inputs; i++) {
-        len += sprintf(buf + len, "float%d input%d : INPUT%d;\r\n", opt_alpha ? 4 : 3, i + 1, i);
-        num_floats += opt_alpha ? 4 : 3;
+    for (int i = 0; i < cc_features.num_inputs; i++) {
+        len += sprintf(buf + len, "float%d input%d : INPUT%d;\r\n", cc_features.opt_alpha ? 4 : 3, i + 1, i);
+        num_floats += cc_features.opt_alpha ? 4 : 3;
     }
     append_line(buf, &len, "};");
     
-    if (used_textures[0]) {
+    if (cc_features.used_textures[0]) {
         append_line(buf, &len, "Texture2D g_texture0 : register(t0);");
         append_line(buf, &len, "SamplerState g_sampler0 : register(s0);");
     }
-    if (used_textures[1]) {
+    if (cc_features.used_textures[1]) {
         append_line(buf, &len, "Texture2D g_texture1 : register(t1);");
         append_line(buf, &len, "SamplerState g_sampler1 : register(s1);");
     }
     
     // Vertex shader
     append_str(buf, &len, "PSInput VSMain(float4 position : POSITION");
-    if (used_textures[0] || used_textures[1]) {
+    if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
         append_str(buf, &len, ", float2 uv : TEXCOORD");
     }
-    if (opt_fog) {
+    if (cc_features.opt_fog) {
         append_str(buf, &len, ", float4 fog : FOG");
     }
-    for (int i = 0; i < num_inputs; i++) {
-        len += sprintf(buf + len, ", float%d input%d : INPUT%d", opt_alpha ? 4 : 3, i + 1, i);
+    for (int i = 0; i < cc_features.num_inputs; i++) {
+        len += sprintf(buf + len, ", float%d input%d : INPUT%d", cc_features.opt_alpha ? 4 : 3, i + 1, i);
     }
     append_line(buf, &len, ") {");
     append_line(buf, &len, "PSInput result;");
     append_line(buf, &len, "result.position = position;");
-    if (used_textures[0] || used_textures[1]) {
+    if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
         append_line(buf, &len, "result.uv = uv;");
     }
-    if (opt_fog) {
+    if (cc_features.opt_fog) {
         append_line(buf, &len, "result.fog = fog;");
     }
-    for (int i = 0; i < num_inputs; i++) {
+    for (int i = 0; i < cc_features.num_inputs; i++) {
         len += sprintf(buf + len, "result.input%d = input%d;\r\n", i + 1, i + 1);
     }
     append_line(buf, &len, "return result;");
@@ -425,38 +313,38 @@ static struct ShaderProgram *gfx_direct3d12_create_and_load_new_shader(uint32_t 
     // Pixel shader
     append_line(buf, &len, "[RootSignature(RS)]");
     append_line(buf, &len, "float4 PSMain(PSInput input) : SV_TARGET {");
-    if (used_textures[0]) {
+    if (cc_features.used_textures[0]) {
         append_line(buf, &len, "float4 texVal0 = g_texture0.Sample(g_sampler0, input.uv);");
     }
-    if (used_textures[1]) {
+    if (cc_features.used_textures[1]) {
         append_line(buf, &len, "float4 texVal1 = g_texture1.Sample(g_sampler1, input.uv);");
     }
     
-    append_str(buf, &len, opt_alpha ? "float4 texel = " : "float3 texel = ");
-    if (!color_alpha_same && opt_alpha) {
+    append_str(buf, &len, cc_features.opt_alpha ? "float4 texel = " : "float3 texel = ");
+    if (!cc_features.color_alpha_same && cc_features.opt_alpha) {
         append_str(buf, &len, "float4(");
-        append_formula(buf, &len, c, do_single[0], do_multiply[0], do_mix[0], false, false, true);
+        append_formula(buf, &len, cc_features.c, cc_features.do_single[0], cc_features.do_multiply[0], cc_features.do_mix[0], false, false, true);
         append_str(buf, &len, ", ");
-        append_formula(buf, &len, c, do_single[1], do_multiply[1], do_mix[1], true, true, true);
+        append_formula(buf, &len, cc_features.c, cc_features.do_single[1], cc_features.do_multiply[1], cc_features.do_mix[1], true, true, true);
         append_str(buf, &len, ")");
     } else {
-        append_formula(buf, &len, c, do_single[0], do_multiply[0], do_mix[0], opt_alpha, false, opt_alpha);
+        append_formula(buf, &len, cc_features.c, cc_features.do_single[0], cc_features.do_multiply[0], cc_features.do_mix[0], cc_features.opt_alpha, false, cc_features.opt_alpha);
     }
     append_line(buf, &len, ";");
     
-    if (opt_texture_edge && opt_alpha) {
+    if (cc_features.opt_texture_edge && cc_features.opt_alpha) {
         append_line(buf, &len, "if (texel.a > 0.3) texel.a = 1.0; else discard;");
     }
     // TODO discard if alpha is 0?
-    if (opt_fog) {
-        if (opt_alpha) {
+    if (cc_features.opt_fog) {
+        if (cc_features.opt_alpha) {
             append_line(buf, &len, "texel = float4(lerp(texel.rgb, input.fog.rgb, input.fog.a), texel.a);");
         } else {
             append_line(buf, &len, "texel = lerp(texel, input.fog.rgb, input.fog.a);");
         }
     }
     
-    if (opt_alpha) {
+    if (cc_features.opt_alpha) {
         append_line(buf, &len, "return texel;");
     } else {
         append_line(buf, &len, "return float4(texel, 1.0);");
@@ -471,9 +359,9 @@ static struct ShaderProgram *gfx_direct3d12_create_and_load_new_shader(uint32_t 
     ThrowIfFailed(d3d.device->CreateRootSignature(0, prg->pixel_shader->GetBufferPointer(), prg->pixel_shader->GetBufferSize(), IID_ID3D12RootSignature, IID_PPV_ARGS_Helper(&prg->root_signature)));
     
     prg->shader_id = shader_id;
-    prg->num_inputs = num_inputs;
-    prg->used_textures[0] = used_textures[0];
-    prg->used_textures[1] = used_textures[1];
+    prg->num_inputs = cc_features.num_inputs;
+    prg->used_textures[0] = cc_features.used_textures[0];
+    prg->used_textures[1] = cc_features.used_textures[1];
     prg->num_floats = num_floats;
     //prg->num_attribs = cnt;
     
@@ -541,16 +429,16 @@ static void gfx_direct3d12_upload_texture(uint8_t *rgba32_buf, int width, int he
         const int textures_per_heap = 64;
         
         D3D12_HEAP_DESC heap_desc = {};
-		heap_desc.SizeInBytes = alloc_info.SizeInBytes * textures_per_heap;
+        heap_desc.SizeInBytes = alloc_info.SizeInBytes * textures_per_heap;
         if (alloc_info.Alignment == D3D12_SMALL_RESOURCE_PLACEMENT_ALIGNMENT) {
             heap_desc.Alignment = D3D12_DEFAULT_RESOURCE_PLACEMENT_ALIGNMENT;
         } else {
             heap_desc.Alignment = alloc_info.Alignment;
         }
-		heap_desc.Properties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-		heap_desc.Properties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-		heap_desc.Properties.Type = D3D12_HEAP_TYPE_DEFAULT;
-		heap_desc.Flags = D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES;
+        heap_desc.Properties.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+        heap_desc.Properties.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+        heap_desc.Properties.Type = D3D12_HEAP_TYPE_DEFAULT;
+        heap_desc.Flags = D3D12_HEAP_FLAG_ALLOW_ONLY_NON_RT_DS_TEXTURES;
         ThrowIfFailed(d3d.device->CreateHeap(&heap_desc, IID_ID3D12Heap, IID_PPV_ARGS_Helper(&found_heap->heap)));
         for (int i = 0; i < textures_per_heap; i++) {
             found_heap->free_list.push_back(i);
@@ -573,12 +461,12 @@ static void gfx_direct3d12_upload_texture(uint8_t *rgba32_buf, int width, int he
         CD3DX12_HEAP_PROPERTIES hp(D3D12_HEAP_TYPE_UPLOAD);
         CD3DX12_RESOURCE_DESC rdb = CD3DX12_RESOURCE_DESC::Buffer(upload_buffer_size);
         ThrowIfFailed(d3d.device->CreateCommittedResource(
-			&hp,
-			D3D12_HEAP_FLAG_NONE,
-			&rdb,
-			D3D12_RESOURCE_STATE_GENERIC_READ,
-			nullptr,
-			IID_ID3D12Resource, IID_PPV_ARGS_Helper(&upload_heap)));
+            &hp,
+            D3D12_HEAP_FLAG_NONE,
+            &rdb,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr,
+            IID_ID3D12Resource, IID_PPV_ARGS_Helper(&upload_heap)));
     } else {
         upload_heap = upload_heaps.back();
         upload_heaps.pop_back();
@@ -799,15 +687,15 @@ static void gfx_direct3d12_start_frame(void) {
         d3d.render_targets[d3d.frame_index].Get(),
         D3D12_RESOURCE_STATE_PRESENT,
         D3D12_RESOURCE_STATE_RENDER_TARGET);
-	d3d.command_list->ResourceBarrier(1, &barrier);
+    d3d.command_list->ResourceBarrier(1, &barrier);
     
     CD3DX12_CPU_DESCRIPTOR_HANDLE rtv_handle(get_cpu_descriptor_handle(d3d.rtv_heap), d3d.frame_index, d3d.rtv_descriptor_size);
     D3D12_CPU_DESCRIPTOR_HANDLE dsv_handle = get_cpu_descriptor_handle(d3d.dsv_heap);
     d3d.command_list->OMSetRenderTargets(1, &rtv_handle, FALSE, &dsv_handle);
     
     static unsigned char c;
-	const float clear_color[] = { 0.0f, 0.0f, 0.0f, 1.0f };
-	d3d.command_list->ClearRenderTargetView(rtv_handle, clear_color, 0, nullptr);
+    const float clear_color[] = { 0.0f, 0.0f, 0.0f, 1.0f };
+    d3d.command_list->ClearRenderTargetView(rtv_handle, clear_color, 0, nullptr);
     d3d.command_list->ClearDepthStencilView(dsv_handle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
     
     d3d.vbuf_pos = 0;
@@ -815,11 +703,11 @@ static void gfx_direct3d12_start_frame(void) {
 
 static void create_render_target_views(void) {
     D3D12_CPU_DESCRIPTOR_HANDLE rtv_handle = get_cpu_descriptor_handle(d3d.rtv_heap);
-	for (UINT i = 0; i < 2; i++) {
-		ThrowIfFailed(d3d.swap_chain->GetBuffer(i, IID_ID3D12Resource, (void **)&d3d.render_targets[i]));
-		d3d.device->CreateRenderTargetView(d3d.render_targets[i].Get(), nullptr, rtv_handle);
-		rtv_handle.ptr += d3d.rtv_descriptor_size;
-	}
+    for (UINT i = 0; i < 2; i++) {
+        ThrowIfFailed(d3d.swap_chain->GetBuffer(i, IID_ID3D12Resource, (void **)&d3d.render_targets[i]));
+        d3d.device->CreateRenderTargetView(d3d.render_targets[i].Get(), nullptr, rtv_handle);
+        rtv_handle.ptr += d3d.rtv_descriptor_size;
+    }
 }
 
 static void create_depth_buffer(void) {
@@ -911,13 +799,20 @@ LRESULT CALLBACK gfx_dxgi_wnd_proc(HWND h_wnd, UINT message, WPARAM w_param, LPA
     return 0;
 }
 
-static void gfx_dxgi_init(void) {
+static void gfx_dxgi_init(const char *game_name) {
     LARGE_INTEGER qpc_init, qpc_freq;
     QueryPerformanceCounter(&qpc_init);
     QueryPerformanceFrequency(&qpc_freq);
     d3d.qpc_init = qpc_init.QuadPart;
     d3d.qpc_freq = qpc_freq.QuadPart;
-    
+
+    // Prepare window title
+
+    char title[512];
+    wchar_t w_title[512];
+    int len = sprintf(title, "%s (%s)", game_name, GFX_API_NAME);
+    mbstowcs(w_title, title, len + 1);
+
     // Create window
     WNDCLASSEXW wcex;
 
@@ -936,13 +831,13 @@ static void gfx_dxgi_init(void) {
     wcex.hIconSm        = nullptr;
 
     ATOM winclass = RegisterClassExW(&wcex);
-    
+
     RECT wr = {0, 0, DESIRED_SCREEN_WIDTH, DESIRED_SCREEN_HEIGHT};
     AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
-    
-    HWND h_wnd = CreateWindowW(WINCLASS_NAME, L"Super Mario 64 PC-Port", WS_OVERLAPPEDWINDOW,
+
+    HWND h_wnd = CreateWindowW(WINCLASS_NAME, w_title, WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT, 0, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr, nullptr, nullptr);
-    
+
     // Create device
     {
         UINT debug_flags = 0;
@@ -1032,10 +927,10 @@ static void gfx_dxgi_init(void) {
     // Create SRV heap for texture descriptors
     {
         D3D12_DESCRIPTOR_HEAP_DESC srv_heap_desc = {};
-		srv_heap_desc.NumDescriptors = 1024; // Max unique textures per frame
-		srv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-		srv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-		ThrowIfFailed(d3d.device->CreateDescriptorHeap(&srv_heap_desc, IID_ID3D12DescriptorHeap, IID_PPV_ARGS_Helper(&d3d.srv_heap)));
+        srv_heap_desc.NumDescriptors = 1024; // Max unique textures per frame
+        srv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+        srv_heap_desc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+        ThrowIfFailed(d3d.device->CreateDescriptorHeap(&srv_heap_desc, IID_ID3D12DescriptorHeap, IID_PPV_ARGS_Helper(&d3d.srv_heap)));
         d3d.srv_descriptor_size = d3d.device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     }
     
@@ -1275,7 +1170,7 @@ static void gfx_dxgi_swap_buffers_begin(void) {
         d3d.render_targets[d3d.frame_index].Get(),
         D3D12_RESOURCE_STATE_RENDER_TARGET,
         D3D12_RESOURCE_STATE_PRESENT);
-	d3d.command_list->ResourceBarrier(1, &barrier);
+    d3d.command_list->ResourceBarrier(1, &barrier);
     
     d3d.command_queue->Wait(d3d.copy_fence.Get(), d3d.copy_fence_value);
     
@@ -1306,11 +1201,11 @@ static void gfx_dxgi_swap_buffers_end(void) {
     QueryPerformanceCounter(&t0);
     
     static UINT64 fence_value;
-	ThrowIfFailed(d3d.command_queue->Signal(d3d.fence.Get(), ++fence_value));
-	if (d3d.fence->GetCompletedValue() < fence_value) {
-		ThrowIfFailed(d3d.fence->SetEventOnCompletion(fence_value, d3d.fence_event));
-		WaitForSingleObject(d3d.fence_event, INFINITE);
-	}
+    ThrowIfFailed(d3d.command_queue->Signal(d3d.fence.Get(), ++fence_value));
+    if (d3d.fence->GetCompletedValue() < fence_value) {
+        ThrowIfFailed(d3d.fence->SetEventOnCompletion(fence_value, d3d.fence_event));
+        WaitForSingleObject(d3d.fence_event, INFINITE);
+    }
     QueryPerformanceCounter(&t1);
     
     d3d.resources_to_clean_at_end_of_frame.clear();
