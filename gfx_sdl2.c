@@ -29,6 +29,9 @@ static int inverted_scancode_table[512];
 static int vsync_enabled = 0;
 static unsigned int window_width = DESIRED_SCREEN_HEIGHT;
 static unsigned int window_height = DESIRED_SCREEN_WIDTH;
+static bool (*on_key_down_callback)(int scancode);
+static bool (*on_key_up_callback)(int scancode);
+static void (*on_all_keys_up_callback)(void);
 
 const SDL_Scancode windows_scancode_table[] =
 { 
@@ -151,6 +154,12 @@ static void gfx_sdl_init(const char *game_name) {
     }
 }
 
+static void gfx_glx_set_keyboard_callbacks(bool (*on_key_down)(int scancode), bool (*on_key_up)(int scancode), void (*on_all_keys_up)(void)) {
+    on_key_down_callback = on_key_down;
+    on_key_up_callback = on_key_up;
+    on_all_keys_up_callback = on_all_keys_up;
+}
+
 static void gfx_sdl_main_loop(void (*run_one_game_iter)(void)) {
     while (1) {
         run_one_game_iter();
@@ -172,12 +181,16 @@ static int translate_scancode(int scancode) {
 
 static void gfx_sdl_onkeydown(int scancode) {
     int key = translate_scancode(scancode);
-    // TODO: dispatch key
+    if (on_key_down_callback != NULL) {
+        on_key_down_callback(key);
+    }
 }
 
 static void gfx_sdl_onkeyup(int scancode) {
     int key = translate_scancode(scancode);
-    // TODO: dispatch key
+    if (on_key_up_callback != NULL) {
+        on_key_up_callback(key);
+    }
 }
 
 static void gfx_sdl_handle_events(void) {
@@ -243,6 +256,7 @@ static double gfx_sdl_get_time(void) {
 
 struct GfxWindowManagerAPI gfx_sdl = {
     gfx_sdl_init,
+    gfx_sdl_set_keyboard_callbacks,
     gfx_sdl_main_loop,
     gfx_sdl_get_dimensions,
     gfx_sdl_handle_events,

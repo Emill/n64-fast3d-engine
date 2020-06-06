@@ -115,6 +115,9 @@ static struct {
     // Game loop callback
 
     void (*run_one_game_iter)(void);
+    bool (*on_key_down)(int scancode);
+    bool (*on_key_up)(int scancode);
+    void (*on_all_keys_up)(void);
 } d3d;
 
 static HWND h_wnd;
@@ -290,7 +293,9 @@ LRESULT CALLBACK gfx_d3d11_dxgi_wnd_proc(HWND h_wnd, UINT message, WPARAM w_para
             break;
         }
         case WM_ACTIVATEAPP: {
-            keyboard_on_all_keys_up();
+            if (d3d.on_all_keys_up != nullptr) {
+                d3d.on_all_keys_up();
+            }
             break;
         }
         case WM_SYSKEYDOWN: {
@@ -302,11 +307,15 @@ LRESULT CALLBACK gfx_d3d11_dxgi_wnd_proc(HWND h_wnd, UINT message, WPARAM w_para
             }
         }
         case WM_KEYDOWN: {
-            keyboard_on_key_down((l_param >> 16) & 0x1ff);
+            if (d3d.on_key_down != nullptr) {
+                d3d.on_key_down((l_param >> 16) & 0x1ff);
+            }
             break;
         }
         case WM_KEYUP: {
-            keyboard_on_key_up((l_param >> 16) & 0x1ff);
+            if (d3d.on_key_up != nullptr) {
+                d3d.on_key_up((l_param >> 16) & 0x1ff);
+            }
             break;
         }
         default: {
@@ -559,6 +568,12 @@ static void gfx_d3d11_dxgi_init(const char *game_name) {
     // Show the window
 
     ShowWindow(h_wnd, SW_SHOW);
+}
+
+static void gfx_d3d11_dxgi_set_keyboard_callbacks(bool (*on_key_down)(int scancode), bool (*on_key_up)(int scancode), void (*on_all_keys_up)(void)) {
+    d3d.on_key_down = on_key_down;
+    d3d.on_key_up = on_key_up;
+    d3d.on_all_keys_up = on_all_keys_up;
 }
 
 static void gfx_d3d11_dxgi_main_loop(void (*run_one_game_iter)(void)) {
@@ -1191,6 +1206,7 @@ struct GfxRenderingAPI gfx_direct3d11_api = {
 
 struct GfxWindowManagerAPI gfx_d3d11_dxgi_api = {
     gfx_d3d11_dxgi_init,
+    gfx_d3d11_set_keyboard_callbacks,
     gfx_d3d11_dxgi_main_loop,
     gfx_d3d11_dxgi_get_dimensions,
     gfx_d3d11_dxgi_handle_events,

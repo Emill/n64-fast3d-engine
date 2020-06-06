@@ -168,6 +168,9 @@ static struct {
     CD3DX12_RECT scissor;
     
     void (*run_one_game_iter)(void);
+    bool (*on_key_down)(int scancode);
+    bool (*on_key_up)(int scancode);
+    void (*on_all_keys_up)(void);
 } d3d;
 
 static int texture_uploads = 0;
@@ -375,7 +378,7 @@ static struct ShaderProgram *gfx_direct3d12_lookup_shader(uint32_t shader_id) {
             return &d3d.shader_program_pool[i];
         }
     }
-    return NULL;
+    return nullptr;
 }
 
 static void gfx_direct3d12_shader_get_info(struct ShaderProgram *prg, uint8_t *num_inputs, bool used_textures[2]) {
@@ -765,11 +768,15 @@ static void gfx_dxgi_on_resize(void) {
 
 static void onkeydown(WPARAM w_param, LPARAM l_param) {
     int key = ((l_param >> 16) & 0x1ff);
-    // TODO: do something with key
+    if (d3d.on_key_down != nullptr) {
+        d3d.on_key_down(key);
+    }
 }
 static void onkeyup(WPARAM w_param, LPARAM l_param) {
     int key = ((l_param >> 16) & 0x1ff);
-    // TODO: do something with key
+    if (d3d.on_key_up != nullptr) {
+        d3d.on_key_up(key);
+    }
 }
 
 LRESULT CALLBACK gfx_dxgi_wnd_proc(HWND h_wnd, UINT message, WPARAM w_param, LPARAM l_param) {
@@ -786,6 +793,9 @@ LRESULT CALLBACK gfx_dxgi_wnd_proc(HWND h_wnd, UINT message, WPARAM w_param, LPA
             break;
         case WM_ACTIVATEAPP:
             keyboard_on_all_keys_up();
+            if (d3d.on_all_keys_up != nullptr) {
+                d3d.on_all_keys_up();
+            }
             break;
         case WM_KEYDOWN:
             onkeydown(w_param, l_param);
@@ -1005,6 +1015,12 @@ static void gfx_dxgi_init(const char *game_name) {
     
     ShowWindow(h_wnd, SW_SHOW);
     UpdateWindow(h_wnd);
+}
+
+static void gfx_dxgi_set_keyboard_callbacks(bool (*on_key_down)(int scancode), bool (*on_key_up)(int scancode), void (*on_all_keys_up)(void)) {
+    d3d.on_key_down = on_key_down;
+    d3d.on_key_up = on_key_up;
+    d3d.on_all_keys_up = on_all_keys_up;
 }
 
 static void gfx_dxgi_main_loop(void (*run_one_game_iter)(void)) {
@@ -1267,6 +1283,7 @@ struct GfxRenderingAPI gfx_direct3d12_api = {
 
 struct GfxWindowManagerAPI gfx_dxgi_api = {
     gfx_dxgi_init,
+    gfx_dxgi_set_keyboard_callbacks,
     gfx_dxgi_main_loop,
     gfx_dxgi_get_dimensions,
     gfx_dxgi_handle_events,

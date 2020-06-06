@@ -159,6 +159,9 @@ static struct {
     bool is_fullscreen;
     
     int keymap[256];
+    bool (*on_key_down)(int scancode);
+    bool (*on_key_up)(int scancode);
+    void (*on_all_keys_up)(void);
     
     PFNGLXGETSYNCVALUESOMLPROC glXGetSyncValuesOML;
     PFNGLXSWAPBUFFERSMSCOMLPROC glXSwapBuffersMscOML;
@@ -336,6 +339,12 @@ static void gfx_glx_init(const char *game_name) {
     glx.vsync_interval = 16666;
 }
 
+static void gfx_glx_set_keyboard_callbacks(bool (*on_key_down)(int scancode), bool (*on_key_up)(int scancode), void (*on_all_keys_up)(void)) {
+    glx.on_key_down = on_key_down;
+    glx.on_key_up = on_key_up;
+    glx.on_all_keys_up = on_all_keys_up;
+}
+
 static void gfx_glx_main_loop(void (*run_one_game_iter)(void)) {
     while (1) {
         run_one_game_iter();
@@ -392,7 +401,9 @@ static void gfx_glx_handle_events(void) {
         XEvent xev;
         XNextEvent(glx.dpy, &xev);
         if (xev.type == FocusOut) {
-            keyboard_on_all_keys_up();
+            if (glx.on_all_keys_up != NULL) {
+                glx.on_all_keys_up();
+            }
         }
         if (xev.type == KeyPress || xev.type == KeyRelease) {
             if (xev.xkey.keycode < 256) {
@@ -403,9 +414,13 @@ static void gfx_glx_handle_events(void) {
                             glx.is_fullscreen = !glx.is_fullscreen;
                             gfx_glx_set_fullscreen(glx.is_fullscreen);
                         }
-                        // TODO: key was pressed, do something with scancode
+                        if (glx.on_key_down != NULL) {
+                            glx.on_key_down(scancode);
+                        }
                     } else {
-                        // TODO: key was released, do something with scancode
+                        if (glx.on_key_up != NULL) {
+                            glx.on_key_up(scancode);
+                        }
                     }
                 }
             }
@@ -570,6 +585,7 @@ static double gfx_glx_get_time(void) {
 
 struct GfxWindowManagerAPI gfx_glx = {
     gfx_glx_init,
+    gfx_glx_set_keyboard_callbacks,
     gfx_glx_main_loop,
     gfx_glx_get_dimensions,
     gfx_glx_handle_events,

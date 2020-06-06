@@ -6,6 +6,7 @@
 
 struct GfxWindowManagerAPI {
     void (*init)(const char *game_name);
+    void (*set_keyboard_callbacks)(bool (*on_key_down)(int scancode), bool (*on_key_up)(int scancode), void (*on_all_keys_up)(void));
     void (*main_loop)(void (*run_one_game_iter)(void));
     void (*get_dimensions)(uint32_t *width, uint32_t *height);
     void (*handle_events)(void);
