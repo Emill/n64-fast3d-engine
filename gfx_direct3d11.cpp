@@ -35,9 +35,15 @@ struct PerFrameCB {
     uint32_t padding[2];
 };
 
+struct PerDrawCB {
+    bool texture_linear_filtering[2];
+    char padding[30];
+};
+
 struct TextureData {
     ComPtr<ID3D11ShaderResourceView> resource_view;
     ComPtr<ID3D11SamplerState> sampler_state;
+    bool linear_filtering;
 };
 
 struct ShaderProgram {
@@ -63,6 +69,7 @@ static struct {
     ComPtr<ID3D11DepthStencilState> depth_stencil_state;
     ComPtr<ID3D11Buffer> vertex_buffer;
     ComPtr<ID3D11Buffer> per_frame_cb;
+    ComPtr<ID3D11Buffer> per_draw_cb;
 
 #if DEBUG_D3D
     ComPtr<ID3D11Debug> debug;
@@ -73,6 +80,7 @@ static struct {
     DXGI_SAMPLE_DESC sample_description;
 
     PerFrameCB per_frame_cb_data;
+    PerDrawCB per_draw_cb_data;
 
     struct ShaderProgram shader_program_pool[64];
     uint8_t shader_program_pool_size;
@@ -509,7 +517,7 @@ static void gfx_d3d11_dxgi_init(const char *game_name) {
     ThrowIfFailed(d3d.device->CreateBuffer(&vertex_buffer_desc, NULL, d3d.vertex_buffer.GetAddressOf()),
                   h_wnd, "Failed to create vertex buffer.");
 
-    // Create constant buffer
+    // Create per-frame constant buffer
 
     D3D11_BUFFER_DESC constant_buffer_desc;
     ZeroMemory(&constant_buffer_desc, sizeof(D3D11_BUFFER_DESC));
@@ -522,6 +530,21 @@ static void gfx_d3d11_dxgi_init(const char *game_name) {
 
     ThrowIfFailed(d3d.device->CreateBuffer(&constant_buffer_desc, NULL, d3d.per_frame_cb.GetAddressOf()),
                   h_wnd, "Failed to create per-frame constant buffer.");
+
+    d3d.context->PSSetConstantBuffers(0, 1, d3d.per_frame_cb.GetAddressOf());
+
+    // Create per-draw constant buffer
+
+    constant_buffer_desc.Usage = D3D11_USAGE_DYNAMIC;
+    constant_buffer_desc.ByteWidth = sizeof(PerDrawCB);
+    constant_buffer_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+    constant_buffer_desc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    constant_buffer_desc.MiscFlags = 0;
+
+    ThrowIfFailed(d3d.device->CreateBuffer(&constant_buffer_desc, NULL, d3d.per_draw_cb.GetAddressOf()),
+                  h_wnd, "Failed to create per-draw constant buffer.");
+
+    d3d.context->PSSetConstantBuffers(1, 1, d3d.per_draw_cb.GetAddressOf());
 
     // Initialize some timer values
 
@@ -696,6 +719,27 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
         append_line(buf, &len, "}");
     }
 
+    // 3 point texture filtering
+    // Original author: ArthurCarvalho
+    // Based on GLSL implementation by twinaphex, mupen64plus-libretro project.
+
+    if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
+        append_line(buf, &len, "cbuffer PerDrawCB : register(b1) {");
+        append_line(buf, &len, "    bool texture_linear_filtering[2];");
+        append_line(buf, &len, "}");
+        append_line(buf, &len, "#define TEX_OFFSET(tex, tSampler, texCoord, off, texSize) tex.Sample(tSampler, texCoord - off / texSize)");
+        append_line(buf, &len, "float4 tex2D3PointFilter(in Texture2D tex, in SamplerState tSampler, in float2 texCoord) {");
+        append_line(buf, &len, "    float2 texSize;");
+        append_line(buf, &len, "    tex.GetDimensions(texSize.x, texSize.y);");
+        append_line(buf, &len, "    float2 offset = frac(texCoord * texSize - float2(0.5, 0.5));");
+        append_line(buf, &len, "    offset -= step(1.0, offset.x + offset.y);");
+        append_line(buf, &len, "    float4 c0 = TEX_OFFSET(tex, tSampler, texCoord, offset, texSize);");
+        append_line(buf, &len, "    float4 c1 = TEX_OFFSET(tex, tSampler, texCoord, float2(offset.x - sign(offset.x), offset.y), texSize);");
+        append_line(buf, &len, "    float4 c2 = TEX_OFFSET(tex, tSampler, texCoord, float2(offset.x, offset.y - sign(offset.y)), texSize);");
+        append_line(buf, &len, "    return c0 + abs(offset.x)*(c1-c0) + abs(offset.y)*(c2-c0);");
+        append_line(buf, &len, "}");
+    }
+
     // Vertex shader
 
     append_str(buf, &len, "PSInput VSMain(float4 position : POSITION");
@@ -727,10 +771,18 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
 
     append_line(buf, &len, "float4 PSMain(PSInput input, float4 screenSpace : SV_Position) : SV_TARGET {");
     if (cc_features.used_textures[0]) {
-        append_line(buf, &len, "    float4 texVal0 = g_texture0.Sample(g_sampler0, input.uv);");
+        append_line(buf, &len, "    float4 texVal0;");
+        append_line(buf, &len, "    if (texture_linear_filtering[0])");
+        append_line(buf, &len, "        texVal0 = tex2D3PointFilter(g_texture0, g_sampler0, input.uv);");
+        append_line(buf, &len, "    else");
+        append_line(buf, &len, "        texVal0 = g_texture0.Sample(g_sampler0, input.uv);");
     }
     if (cc_features.used_textures[1]) {
-        append_line(buf, &len, "    float4 texVal1 = g_texture1.Sample(g_sampler1, input.uv);");
+        append_line(buf, &len, "    float4 texVal1;");
+        append_line(buf, &len, "    if (texture_linear_filtering[1])");
+        append_line(buf, &len, "        texVal1 = tex2D3PointFilter(g_texture1, g_sampler1, input.uv);");
+        append_line(buf, &len, "    else");
+        append_line(buf, &len, "        texVal1 = g_texture1.Sample(g_sampler1, input.uv);");
     }
 
     append_str(buf, &len, cc_features.opt_alpha ? "    float4 texel = " : "    float3 texel = ");
@@ -909,7 +961,7 @@ static void gfx_d3d11_set_sampler_parameters(int tile, bool linear_filter, uint3
     D3D11_SAMPLER_DESC sampler_desc;
     ZeroMemory(&sampler_desc, sizeof(D3D11_SAMPLER_DESC));
 
-    sampler_desc.Filter = linear_filter ? D3D11_FILTER_MIN_MAG_MIP_LINEAR : D3D11_FILTER_MIN_MAG_MIP_POINT;
+    sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
     sampler_desc.AddressU = gfx_cm_to_d3d11(cms);
     sampler_desc.AddressV = gfx_cm_to_d3d11(cmt);
     sampler_desc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
@@ -922,6 +974,8 @@ static void gfx_d3d11_set_sampler_parameters(int tile, bool linear_filter, uint3
     texture_data->sampler_state.Reset();
 
     ThrowIfFailed(d3d.device->CreateSamplerState(&sampler_desc, texture_data->sampler_state.GetAddressOf()));
+
+    texture_data->linear_filtering = linear_filter;
 }
 
 static void gfx_d3d11_set_depth_test(bool depth_test) {
@@ -1005,11 +1059,16 @@ static void gfx_d3d11_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t
         d3d.context->RSSetState(d3d.rasterizer_state.Get());
     }
 
+    bool textures_changed = false;
+
     for (int i = 0; i < 2; i++) {
         if (d3d.shader_program->used_textures[i]) {
             if (d3d.last_resource_views[i].Get() != d3d.textures[d3d.current_texture_ids[i]].resource_view.Get()) {
                 d3d.last_resource_views[i] = d3d.textures[d3d.current_texture_ids[i]].resource_view.Get();
                 d3d.context->PSSetShaderResources(i, 1, d3d.textures[d3d.current_texture_ids[i]].resource_view.GetAddressOf());
+
+                d3d.per_draw_cb_data.texture_linear_filtering[i] = d3d.textures[d3d.current_texture_ids[i]].linear_filtering;
+                textures_changed = true;
 
                 if (d3d.last_sampler_states[i].Get() != d3d.textures[d3d.current_texture_ids[i]].sampler_state.Get()) {
                     d3d.last_sampler_states[i] = d3d.textures[d3d.current_texture_ids[i]].sampler_state.Get();
@@ -1018,6 +1077,18 @@ static void gfx_d3d11_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t
             }
         }
     }
+
+    // Set per-draw constant buffer
+
+    if (textures_changed) {
+        D3D11_MAPPED_SUBRESOURCE ms;
+        ZeroMemory(&ms, sizeof(D3D11_MAPPED_SUBRESOURCE));
+        d3d.context->Map(d3d.per_draw_cb.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms);
+        memcpy(ms.pData, &d3d.per_draw_cb_data, sizeof(PerDrawCB));
+        d3d.context->Unmap(d3d.per_draw_cb.Get(), 0);
+    }
+
+    // Set vertex buffer data
 
     D3D11_MAPPED_SUBRESOURCE ms;
     ZeroMemory(&ms, sizeof(D3D11_MAPPED_SUBRESOURCE));
@@ -1077,8 +1148,6 @@ static void gfx_d3d11_start_frame(void) {
     d3d.context->Map(d3d.per_frame_cb.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms);
     memcpy(ms.pData, &d3d.per_frame_cb_data, sizeof(PerFrameCB));
     d3d.context->Unmap(d3d.per_frame_cb.Get(), 0);
-
-    d3d.context->PSSetConstantBuffers(0, 1, d3d.per_frame_cb.GetAddressOf());
 }
 
 struct GfxRenderingAPI gfx_direct3d11_api = {
