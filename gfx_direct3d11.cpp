@@ -25,6 +25,7 @@
 #define GFX_API_NAME "Direct3D 11"
 #define WINDOW_CLIENT_MIN_WIDTH 320
 #define WINDOW_CLIENT_MIN_HEIGHT 240
+#define THREE_POINT_FILTERING 0
 #define DEBUG_D3D 0
 
 using namespace Microsoft::WRL; // For ComPtr
@@ -723,6 +724,7 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
     // Original author: ArthurCarvalho
     // Based on GLSL implementation by twinaphex, mupen64plus-libretro project.
 
+#if THREE_POINT_FILTERING
     if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
         append_line(buf, &len, "cbuffer PerDrawCB : register(b1) {");
         append_line(buf, &len, "    bool texture_linear_filtering[2];");
@@ -739,6 +741,7 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
         append_line(buf, &len, "    return c0 + abs(offset.x)*(c1-c0) + abs(offset.y)*(c2-c0);");
         append_line(buf, &len, "}");
     }
+#endif
 
     // Vertex shader
 
@@ -771,18 +774,26 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
 
     append_line(buf, &len, "float4 PSMain(PSInput input, float4 screenSpace : SV_Position) : SV_TARGET {");
     if (cc_features.used_textures[0]) {
+#if THREE_POINT_FILTERING
         append_line(buf, &len, "    float4 texVal0;");
         append_line(buf, &len, "    if (texture_linear_filtering[0])");
         append_line(buf, &len, "        texVal0 = tex2D3PointFilter(g_texture0, g_sampler0, input.uv);");
         append_line(buf, &len, "    else");
         append_line(buf, &len, "        texVal0 = g_texture0.Sample(g_sampler0, input.uv);");
+#else
+        append_line(buf, &len, "    float4 texVal0 = g_texture0.Sample(g_sampler0, input.uv);");
+#endif
     }
     if (cc_features.used_textures[1]) {
+#if THREE_POINT_FILTERING
         append_line(buf, &len, "    float4 texVal1;");
         append_line(buf, &len, "    if (texture_linear_filtering[1])");
         append_line(buf, &len, "        texVal1 = tex2D3PointFilter(g_texture1, g_sampler1, input.uv);");
         append_line(buf, &len, "    else");
         append_line(buf, &len, "        texVal1 = g_texture1.Sample(g_sampler1, input.uv);");
+#else
+        append_line(buf, &len, "    float4 texVal1 = g_texture1.Sample(g_sampler1, input.uv);");
+#endif
     }
 
     append_str(buf, &len, cc_features.opt_alpha ? "    float4 texel = " : "    float3 texel = ");
@@ -961,7 +972,11 @@ static void gfx_d3d11_set_sampler_parameters(int tile, bool linear_filter, uint3
     D3D11_SAMPLER_DESC sampler_desc;
     ZeroMemory(&sampler_desc, sizeof(D3D11_SAMPLER_DESC));
 
+#if THREE_POINT_FILTERING
     sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+#else
+    sampler_desc.Filter = linear_filter ? D3D11_FILTER_MIN_MAG_MIP_LINEAR : D3D11_FILTER_MIN_MAG_MIP_POINT;
+#endif
     sampler_desc.AddressU = gfx_cm_to_d3d11(cms);
     sampler_desc.AddressV = gfx_cm_to_d3d11(cmt);
     sampler_desc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
@@ -1067,8 +1082,10 @@ static void gfx_d3d11_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t
                 d3d.last_resource_views[i] = d3d.textures[d3d.current_texture_ids[i]].resource_view.Get();
                 d3d.context->PSSetShaderResources(i, 1, d3d.textures[d3d.current_texture_ids[i]].resource_view.GetAddressOf());
 
+#if THREE_POINT_FILTERING
                 d3d.per_draw_cb_data.texture_linear_filtering[i] = d3d.textures[d3d.current_texture_ids[i]].linear_filtering;
                 textures_changed = true;
+#endif
 
                 if (d3d.last_sampler_states[i].Get() != d3d.textures[d3d.current_texture_ids[i]].sampler_state.Get()) {
                     d3d.last_sampler_states[i] = d3d.textures[d3d.current_texture_ids[i]].sampler_state.Get();
