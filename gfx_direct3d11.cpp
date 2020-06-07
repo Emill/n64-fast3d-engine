@@ -31,19 +31,26 @@
 using namespace Microsoft::WRL; // For ComPtr
 
 struct PerFrameCB {
-    uint32_t frame_count;
-    uint32_t window_height;
-    uint32_t padding[2];
+    uint32_t noise_frame;
+    float noise_scale_x;
+    float noise_scale_y;
+    uint32_t padding;
 };
 
 struct PerDrawCB {
-    bool texture_linear_filtering[2];
-    char padding[30];
+    struct Texture {
+        uint32_t width;
+        uint32_t height;
+        uint32_t linear_filtering;
+        uint32_t padding;
+    } textures[2];
 };
 
 struct TextureData {
     ComPtr<ID3D11ShaderResourceView> resource_view;
     ComPtr<ID3D11SamplerState> sampler_state;
+    uint32_t width;
+    uint32_t height;
     bool linear_filtering;
 };
 
@@ -218,7 +225,7 @@ static void create_render_target_views(uint32_t width, uint32_t height) {
     depth_stencil_texture_desc.Height = height;
     depth_stencil_texture_desc.MipLevels = 1;
     depth_stencil_texture_desc.ArraySize = 1;
-    depth_stencil_texture_desc.Format = DXGI_FORMAT_D32_FLOAT;
+    depth_stencil_texture_desc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
     depth_stencil_texture_desc.SampleDesc = d3d.sample_description;
     depth_stencil_texture_desc.Usage = D3D11_USAGE_DEFAULT;
     depth_stencil_texture_desc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
@@ -383,13 +390,22 @@ static void gfx_d3d11_dxgi_init(const char *game_name) {
     UINT device_creation_flags = 0;
 #endif
 
+    D3D_FEATURE_LEVEL FeatureLevels[] = {
+        D3D_FEATURE_LEVEL_11_0,
+        D3D_FEATURE_LEVEL_10_1,
+        D3D_FEATURE_LEVEL_10_0,
+        D3D_FEATURE_LEVEL_9_3,
+        D3D_FEATURE_LEVEL_9_2,
+        D3D_FEATURE_LEVEL_9_1
+    };
+
     ThrowIfFailed(D3D11CreateDevice(
         nullptr,
         D3D_DRIVER_TYPE_HARDWARE,
         nullptr,
         device_creation_flags,
-        nullptr,
-        0,
+        FeatureLevels,
+        ARRAYSIZE(FeatureLevels),
         D3D11_SDK_VERSION,
         d3d.device.GetAddressOf(),
         NULL,
@@ -686,7 +702,7 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
     CCFeatures cc_features;
     get_cc_features(shader_id, &cc_features);
 
-    char buf[2048];
+    char buf[4096];
     size_t len = 0;
     size_t num_floats = 4;
 
@@ -698,6 +714,10 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
     if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
         append_line(buf, &len, "    float2 uv : TEXCOORD;");
         num_floats += 2;
+    }
+
+    if (cc_features.opt_alpha && cc_features.opt_noise) {
+        append_line(buf, &len, "    float4 screenPos : TEXCOORD1;");
     }
 
     if (cc_features.opt_fog) {
@@ -725,12 +745,12 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
 
     if (cc_features.opt_alpha && cc_features.opt_noise) {
         append_line(buf, &len, "cbuffer PerFrameCB : register(b0) {");
-        append_line(buf, &len, "    uint frame_count;");
-        append_line(buf, &len, "    uint window_height;");
+        append_line(buf, &len, "    uint noise_frame;");
+        append_line(buf, &len, "    float2 noise_scale;");
         append_line(buf, &len, "}");
 
         append_line(buf, &len, "float random(in float3 value) {");
-        append_line(buf, &len, "    float random = dot(sin(value), float3(12.9898, 78.233, 37.719));");
+        append_line(buf, &len, "    float random = dot(value, float3(12.9898, 78.233, 37.719));");
         append_line(buf, &len, "    return frac(sin(random) * 143758.5453);");
         append_line(buf, &len, "}");
     }
@@ -742,12 +762,14 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
 #if THREE_POINT_FILTERING
     if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
         append_line(buf, &len, "cbuffer PerDrawCB : register(b1) {");
-        append_line(buf, &len, "    bool texture_linear_filtering[2];");
+        append_line(buf, &len, "    struct {");
+        append_line(buf, &len, "        uint width;");
+        append_line(buf, &len, "        uint height;");
+        append_line(buf, &len, "        bool linear_filtering;");
+        append_line(buf, &len, "    } textures[2];");
         append_line(buf, &len, "}");
         append_line(buf, &len, "#define TEX_OFFSET(tex, tSampler, texCoord, off, texSize) tex.Sample(tSampler, texCoord - off / texSize)");
-        append_line(buf, &len, "float4 tex2D3PointFilter(in Texture2D tex, in SamplerState tSampler, in float2 texCoord) {");
-        append_line(buf, &len, "    float2 texSize;");
-        append_line(buf, &len, "    tex.GetDimensions(texSize.x, texSize.y);");
+        append_line(buf, &len, "float4 tex2D3PointFilter(in Texture2D tex, in SamplerState tSampler, in float2 texCoord, in float2 texSize) {");
         append_line(buf, &len, "    float2 offset = frac(texCoord * texSize - float2(0.5, 0.5));");
         append_line(buf, &len, "    offset -= step(1.0, offset.x + offset.y);");
         append_line(buf, &len, "    float4 c0 = TEX_OFFSET(tex, tSampler, texCoord, offset, texSize);");
@@ -773,6 +795,9 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
     append_line(buf, &len, ") {");
     append_line(buf, &len, "    PSInput result;");
     append_line(buf, &len, "    result.position = position;");
+    if (cc_features.opt_alpha && cc_features.opt_noise) {
+        append_line(buf, &len, "    result.screenPos = position;");
+    }
     if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
         append_line(buf, &len, "    result.uv = uv;");
     }
@@ -787,12 +812,12 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
 
     // Pixel shader
 
-    append_line(buf, &len, "float4 PSMain(PSInput input, float4 screenSpace : SV_Position) : SV_TARGET {");
+    append_line(buf, &len, "float4 PSMain(PSInput input) : SV_TARGET {");
     if (cc_features.used_textures[0]) {
 #if THREE_POINT_FILTERING
         append_line(buf, &len, "    float4 texVal0;");
-        append_line(buf, &len, "    if (texture_linear_filtering[0])");
-        append_line(buf, &len, "        texVal0 = tex2D3PointFilter(g_texture0, g_sampler0, input.uv);");
+        append_line(buf, &len, "    if (textures[0].linear_filtering)");
+        append_line(buf, &len, "        texVal0 = tex2D3PointFilter(g_texture0, g_sampler0, input.uv, float2(textures[0].width, textures[0].height));");
         append_line(buf, &len, "    else");
         append_line(buf, &len, "        texVal0 = g_texture0.Sample(g_sampler0, input.uv);");
 #else
@@ -802,8 +827,8 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
     if (cc_features.used_textures[1]) {
 #if THREE_POINT_FILTERING
         append_line(buf, &len, "    float4 texVal1;");
-        append_line(buf, &len, "    if (texture_linear_filtering[1])");
-        append_line(buf, &len, "        texVal1 = tex2D3PointFilter(g_texture1, g_sampler1, input.uv);");
+        append_line(buf, &len, "    if (textures[1].linear_filtering)");
+        append_line(buf, &len, "        texVal1 = tex2D3PointFilter(g_texture1, g_sampler1, input.uv, float2(textures[1].width, textures[1].height));");
         append_line(buf, &len, "    else");
         append_line(buf, &len, "        texVal1 = g_texture1.Sample(g_sampler1, input.uv);");
 #else
@@ -836,7 +861,8 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
     }
 
     if (cc_features.opt_alpha && cc_features.opt_noise) {
-        append_line(buf, &len, "    texel.a *= round(random(float3(floor(screenSpace.xy * (240.0 / window_height)), frame_count)));");
+        append_line(buf, &len, "    float2 coords = (input.screenPos.xy / input.screenPos.w) * noise_scale;");
+        append_line(buf, &len, "    texel.a *= round(random(float3(floor(coords), noise_frame)));");
     }
 
     if (cc_features.opt_alpha) {
@@ -847,14 +873,27 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
     append_line(buf, &len, "}");
 
     ComPtr<ID3DBlob> vs, ps;
+    ComPtr<ID3DBlob> error_blob;
 
 #if DEBUG_D3D
-    ThrowIfFailed(D3DCompile(buf, len, nullptr, nullptr, nullptr, "VSMain", "vs_4_0", D3DCOMPILE_DEBUG, 0, vs.GetAddressOf(), nullptr));
-    ThrowIfFailed(D3DCompile(buf, len, nullptr, nullptr, nullptr, "PSMain", "ps_4_0", D3DCOMPILE_DEBUG, 0, ps.GetAddressOf(), nullptr));
+    UINT compile_flags = D3DCOMPILE_DEBUG;
 #else
-    ThrowIfFailed(D3DCompile(buf, len, nullptr, nullptr, nullptr, "VSMain", "vs_4_0", 0, 0, vs.GetAddressOf(), nullptr));
-    ThrowIfFailed(D3DCompile(buf, len, nullptr, nullptr, nullptr, "PSMain", "ps_4_0", 0, 0, ps.GetAddressOf(), nullptr));
+    UINT compile_flags = D3DCOMPILE_OPTIMIZATION_LEVEL2;
 #endif
+
+    HRESULT hr = D3DCompile(buf, len, nullptr, nullptr, nullptr, "VSMain", "vs_4_0_level_9_1", compile_flags, 0, vs.GetAddressOf(), error_blob.GetAddressOf());
+
+    if (FAILED(hr)) {
+        MessageBox(h_wnd, (char *) error_blob->GetBufferPointer(), "Error", MB_OK | MB_ICONERROR);
+        throw hr;
+    }
+
+    hr = D3DCompile(buf, len, nullptr, nullptr, nullptr, "PSMain", "ps_4_0_level_9_1", compile_flags, 0, ps.GetAddressOf(), error_blob.GetAddressOf());
+
+    if (FAILED(hr)) {
+        MessageBox(h_wnd, (char *) error_blob->GetBufferPointer(), "Error", MB_OK | MB_ICONERROR);
+        throw hr;
+    }
 
     struct ShaderProgram *prg = &d3d.shader_program_pool[d3d.shader_program_pool_size++];
 
@@ -980,6 +1019,9 @@ static void gfx_d3d11_upload_texture(uint8_t *rgba32_buf, int width, int height)
     resource_view_desc.Texture2D.MipLevels = -1;
 
     TextureData *texture_data = &d3d.textures[d3d.current_texture_ids[d3d.current_tile]];
+    texture_data->width = width;
+    texture_data->height = height;
+
     ThrowIfFailed(d3d.device->CreateShaderResourceView(texture.Get(), &resource_view_desc, texture_data->resource_view.GetAddressOf()));
 }
 
@@ -995,8 +1037,11 @@ static void gfx_d3d11_set_sampler_parameters(int tile, bool linear_filter, uint3
     sampler_desc.AddressU = gfx_cm_to_d3d11(cms);
     sampler_desc.AddressV = gfx_cm_to_d3d11(cmt);
     sampler_desc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+    sampler_desc.MinLOD = -D3D11_FLOAT32_MAX;
+    sampler_desc.MaxLOD = D3D11_FLOAT32_MAX;
 
     TextureData *texture_data = &d3d.textures[d3d.current_texture_ids[tile]];
+    texture_data->linear_filtering = linear_filter;
 
     // This function is called twice per texture, the first one only to set default values.
     // Maybe that could be skipped? Anyway, make sure to release the first default sampler
@@ -1004,8 +1049,6 @@ static void gfx_d3d11_set_sampler_parameters(int tile, bool linear_filter, uint3
     texture_data->sampler_state.Reset();
 
     ThrowIfFailed(d3d.device->CreateSamplerState(&sampler_desc, texture_data->sampler_state.GetAddressOf()));
-
-    texture_data->linear_filtering = linear_filter;
 }
 
 static void gfx_d3d11_set_depth_test(bool depth_test) {
@@ -1098,7 +1141,9 @@ static void gfx_d3d11_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t
                 d3d.context->PSSetShaderResources(i, 1, d3d.textures[d3d.current_texture_ids[i]].resource_view.GetAddressOf());
 
 #if THREE_POINT_FILTERING
-                d3d.per_draw_cb_data.texture_linear_filtering[i] = d3d.textures[d3d.current_texture_ids[i]].linear_filtering;
+                d3d.per_draw_cb_data.textures[i].width = d3d.textures[d3d.current_texture_ids[i]].width;
+                d3d.per_draw_cb_data.textures[i].height = d3d.textures[d3d.current_texture_ids[i]].height;
+                d3d.per_draw_cb_data.textures[i].linear_filtering = d3d.textures[d3d.current_texture_ids[i]].linear_filtering;
                 textures_changed = true;
 #endif
 
@@ -1172,8 +1217,14 @@ static void gfx_d3d11_start_frame(void) {
 
     // Set per-frame constant buffer
 
-    d3d.per_frame_cb_data.frame_count++;
-    d3d.per_frame_cb_data.window_height = d3d.current_height;
+    d3d.per_frame_cb_data.noise_frame++;
+    if (d3d.per_frame_cb_data.noise_frame > 150) {
+        // No high values, as noise starts to look ugly
+        d3d.per_frame_cb_data.noise_frame = 0;
+    }
+    float aspect_ratio = (float) d3d.current_width / (float) d3d.current_height;
+    d3d.per_frame_cb_data.noise_scale_x = 120 * aspect_ratio; // 120 = N64 height resolution (240) / 2
+    d3d.per_frame_cb_data.noise_scale_y = 120;
 
     D3D11_MAPPED_SUBRESOURCE ms;
     ZeroMemory(&ms, sizeof(D3D11_MAPPED_SUBRESOURCE));
