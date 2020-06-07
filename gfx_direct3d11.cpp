@@ -1037,7 +1037,7 @@ static void gfx_d3d11_set_sampler_parameters(int tile, bool linear_filter, uint3
     sampler_desc.AddressU = gfx_cm_to_d3d11(cms);
     sampler_desc.AddressV = gfx_cm_to_d3d11(cmt);
     sampler_desc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
-    sampler_desc.MinLOD = -D3D11_FLOAT32_MAX;
+    sampler_desc.MinLOD = 0;
     sampler_desc.MaxLOD = D3D11_FLOAT32_MAX;
 
     TextureData *texture_data = &d3d.textures[d3d.current_texture_ids[tile]];
