@@ -375,6 +375,48 @@ static void import_texture_ia16(int tile) {
     gfx_rapi->upload_texture(rgba32_buf, width, height);
 }
 
+static void import_texture_i4(int tile) {
+    uint8_t rgba32_buf[32768];
+
+    for (uint32_t i = 0; i < rdp.loaded_texture[tile].size_bytes * 2; i++) {
+        uint8_t byte = rdp.loaded_texture[tile].addr[i / 2];
+        uint8_t part = (byte >> (4 - (i % 2) * 4)) & 0xf;
+        uint8_t intensity = part;
+        uint8_t r = intensity;
+        uint8_t g = intensity;
+        uint8_t b = intensity;
+        rgba32_buf[4 * i + 0] = SCALE_4_8(r);
+        rgba32_buf[4 * i + 1] = SCALE_4_8(g);
+        rgba32_buf[4 * i + 2] = SCALE_4_8(b);
+        rgba32_buf[4 * i + 3] = 255;
+    }
+
+    uint32_t width = rdp.texture_tile.line_size_bytes * 2;
+    uint32_t height = rdp.loaded_texture[tile].size_bytes / rdp.texture_tile.line_size_bytes;
+
+    gfx_rapi->upload_texture(rgba32_buf, width, height);
+}
+
+static void import_texture_i8(int tile) {
+    uint8_t rgba32_buf[16384];
+
+    for (uint32_t i = 0; i < rdp.loaded_texture[tile].size_bytes; i++) {
+        uint8_t intensity = rdp.loaded_texture[tile].addr[i];
+        uint8_t r = intensity;
+        uint8_t g = intensity;
+        uint8_t b = intensity;
+        rgba32_buf[4 * i + 0] = r;
+        rgba32_buf[4 * i + 1] = g;
+        rgba32_buf[4 * i + 2] = b;
+        rgba32_buf[4 * i + 3] = 255;
+    }
+
+    uint32_t width = rdp.texture_tile.line_size_bytes;
+    uint32_t height = rdp.loaded_texture[tile].size_bytes / rdp.texture_tile.line_size_bytes;
+
+    gfx_rapi->upload_texture(rgba32_buf, width, height);
+}
+
 static void import_texture_ci4(int tile) {
     uint8_t rgba32_buf[32768];
     
@@ -453,6 +495,17 @@ static void import_texture(int tile) {
         } else if (siz == G_IM_SIZ_8b) {
             import_texture_ci8(tile);
         } else {
+            abort();
+        }
+    }
+    else if (fmt == G_IM_FMT_I) {
+        if (siz == G_IM_SIZ_4b) {
+            import_texture_i4(tile);
+        }
+        else if (siz == G_IM_SIZ_8b) {
+            import_texture_i8(tile);
+        }
+        else {
             abort();
         }
     } else {
