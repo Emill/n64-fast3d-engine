@@ -385,10 +385,10 @@ static void import_texture_i4(int tile) {
         uint8_t r = intensity;
         uint8_t g = intensity;
         uint8_t b = intensity;
-        rgba32_buf[4 * i + 0] = SCALE_4_8(r);
-        rgba32_buf[4 * i + 1] = SCALE_4_8(g);
-        rgba32_buf[4 * i + 2] = SCALE_4_8(b);
-        rgba32_buf[4 * i + 3] = 255;
+        rgba32_buf[4*i + 0] = SCALE_4_8(r);
+        rgba32_buf[4*i + 1] = SCALE_4_8(g);
+        rgba32_buf[4*i + 2] = SCALE_4_8(b);
+        rgba32_buf[4*i + 3] = 255;
     }
 
     uint32_t width = rdp.texture_tile.line_size_bytes * 2;
@@ -405,10 +405,10 @@ static void import_texture_i8(int tile) {
         uint8_t r = intensity;
         uint8_t g = intensity;
         uint8_t b = intensity;
-        rgba32_buf[4 * i + 0] = r;
-        rgba32_buf[4 * i + 1] = g;
-        rgba32_buf[4 * i + 2] = b;
-        rgba32_buf[4 * i + 3] = 255;
+        rgba32_buf[4*i + 0] = r;
+        rgba32_buf[4*i + 1] = g;
+        rgba32_buf[4*i + 2] = b;
+        rgba32_buf[4*i + 3] = 255;
     }
 
     uint32_t width = rdp.texture_tile.line_size_bytes;
@@ -416,6 +416,7 @@ static void import_texture_i8(int tile) {
 
     gfx_rapi->upload_texture(rgba32_buf, width, height);
 }
+
 
 static void import_texture_ci4(int tile) {
     uint8_t rgba32_buf[32768];
@@ -497,15 +498,12 @@ static void import_texture(int tile) {
         } else {
             abort();
         }
-    }
-    else if (fmt == G_IM_FMT_I) {
+    } else if (fmt == G_IM_FMT_I) {
         if (siz == G_IM_SIZ_4b) {
             import_texture_i4(tile);
-        }
-        else if (siz == G_IM_SIZ_8b) {
+        } else if (siz == G_IM_SIZ_8b) {
             import_texture_i8(tile);
-        }
-        else {
+        } else {
             abort();
         }
     } else {
@@ -553,8 +551,8 @@ static void gfx_matrix_mul(float res[4][4], const float a[4][4], const float b[4
 
 static void gfx_sp_matrix(uint8_t parameters, const int32_t *addr) {
     float matrix[4][4];
-#if 0
-    // Original code when fixed point matrices were used
+#ifndef GBI_FLOATS
+    // Original GBI where fixed point matrices are used
     for (int i = 0; i < 4; i++) {
         for (int j = 0; j < 4; j += 2) {
             int32_t int_part = addr[i * 2 + j / 2];
@@ -564,7 +562,7 @@ static void gfx_sp_matrix(uint8_t parameters, const int32_t *addr) {
         }
     }
 #else
-    // Assumes a modified GBI where fixed point values are replaced with floats
+    // For a modified GBI where fixed point values are replaced with floats
     memcpy(matrix, addr, sizeof(matrix));
 #endif
     
@@ -1027,7 +1025,6 @@ static void gfx_dp_set_texture_image(uint32_t format, uint32_t size, uint32_t wi
 }
 
 static void gfx_dp_set_tile(uint8_t fmt, uint32_t siz, uint32_t line, uint32_t tmem, uint8_t tile, uint32_t palette, uint32_t cmt, uint32_t maskt, uint32_t shiftt, uint32_t cms, uint32_t masks, uint32_t shifts) {
-    
     if (tile == G_TX_RENDERTILE) {
         SUPPORT_CHECK(palette == 0); // palette should set upper 4 bits of color index in 4b mode
         rdp.texture_tile.fmt = fmt;
@@ -1090,6 +1087,42 @@ static void gfx_dp_load_block(uint8_t tile, uint32_t uls, uint32_t ult, uint32_t
     
     rdp.textures_changed[rdp.texture_to_load.tile_number] = true;
 }
+
+static void gfx_dp_load_tile(uint8_t tile, uint32_t uls, uint32_t ult, uint32_t lrs, uint32_t lrt) {
+    if (tile == 1) return;
+    SUPPORT_CHECK(tile == G_TX_LOADTILE);
+    SUPPORT_CHECK(uls == 0);
+    SUPPORT_CHECK(ult == 0);
+
+    uint32_t word_size_shift;
+    switch (rdp.texture_to_load.siz) {
+        case G_IM_SIZ_4b:
+            word_size_shift = 0;
+            break;
+        case G_IM_SIZ_8b:
+            word_size_shift = 0;
+            break;
+        case G_IM_SIZ_16b:
+            word_size_shift = 1;
+            break;
+        case G_IM_SIZ_32b:
+            word_size_shift = 2;
+            break;
+    }
+
+    uint32_t size_bytes = (((lrs >> G_TEXTURE_IMAGE_FRAC) + 1) * ((lrt >> G_TEXTURE_IMAGE_FRAC) + 1)) << word_size_shift;
+    rdp.loaded_texture[rdp.texture_to_load.tile_number].size_bytes = size_bytes;
+
+    assert(size_bytes <= 4096 && "bug: too big texture");
+    rdp.loaded_texture[rdp.texture_to_load.tile_number].addr = rdp.texture_to_load.addr;
+    rdp.texture_tile.uls = uls;
+    rdp.texture_tile.ult = ult;
+    rdp.texture_tile.lrs = lrs;
+    rdp.texture_tile.lrt = lrt;
+
+    rdp.textures_changed[rdp.texture_to_load.tile_number] = true;
+}
+
 
 static uint8_t color_comb_component(uint32_t v) {
     switch (v) {
@@ -1434,6 +1467,9 @@ static void gfx_run_dl(Gfx* cmd) {
             case G_LOADBLOCK:
                 gfx_dp_load_block(C1(24, 3), C0(12, 12), C0(0, 12), C1(12, 12), C1(0, 12));
                 break;
+            case G_LOADTILE:
+                gfx_dp_load_tile(C1(24, 3), C0(12, 12), C0(0, 12), C1(12, 12), C1(0, 12));
+                break;
             case G_SETTILE:
                 gfx_dp_set_tile(C0(21, 3), C0(19, 2), C0(9, 9), C0(0, 9), C1(24, 3), C1(20, 4), C1(18, 2), C1(14, 4), C1(10, 4), C1(8, 2), C1(4, 4), C1(0, 4));
                 break;
@@ -1536,10 +1572,10 @@ void gfx_get_dimensions(uint32_t *width, uint32_t *height) {
     gfx_wapi->get_dimensions(width, height);
 }
 
-void gfx_init(struct GfxWindowManagerAPI *wapi, struct GfxRenderingAPI *rapi, const char *game_name) {
+void gfx_init(struct GfxWindowManagerAPI *wapi, struct GfxRenderingAPI *rapi, const char *game_name, bool start_in_fullscreen) {
     gfx_wapi = wapi;
     gfx_rapi = rapi;
-    gfx_wapi->init(game_name);
+    gfx_wapi->init(game_name, start_in_fullscreen);
     gfx_rapi->init();
     
     // Used in the 120 star TAS
@@ -1566,11 +1602,18 @@ void gfx_init(struct GfxWindowManagerAPI *wapi, struct GfxRenderingAPI *rapi, co
         0x01141045,
         0x07a00a00,
         0x05200200,
-        0x03200200
+        0x03200200,
+        0x09200200,
+        0x0920038d,
+        0x09200045
     };
     for (size_t i = 0; i < sizeof(precomp_shaders) / sizeof(uint32_t); i++) {
         gfx_lookup_or_create_shader_program(precomp_shaders[i]);
     }
+}
+
+struct GfxRenderingAPI *gfx_get_current_rendering_api(void) {
+    return gfx_rapi;
 }
 
 void gfx_start_frame(void) {
@@ -1600,11 +1643,13 @@ void gfx_run(Gfx *commands) {
     gfx_flush();
     double t1 = gfx_wapi->get_time();
     //printf("Process %f %f\n", t1, t1 - t0);
+    gfx_rapi->end_frame();
     gfx_wapi->swap_buffers_begin();
 }
 
 void gfx_end_frame(void) {
     if (!dropped_frame) {
+        gfx_rapi->finish_render();
         gfx_wapi->swap_buffers_end();
     }
 }

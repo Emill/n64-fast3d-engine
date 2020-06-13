@@ -15,8 +15,6 @@
 #include "gfx_window_manager_api.h"
 #include "gfx_screen_config.h"
 
-#include "configfile.h"
-
 #define GFX_API_NAME "GLX - OpenGL"
 
 #ifdef VERSION_EU
@@ -157,6 +155,7 @@ static struct {
     Atom atom_wm_state_fullscreen;
     
     bool is_fullscreen;
+    void (*on_fullscreen_changed)(bool is_now_fullscreen);
     
     int keymap[256];
     bool (*on_key_down)(int scancode);
@@ -237,7 +236,51 @@ static void init_keymap(void) {
     XkbFreeKeyboard(desc, 0, True);
 }
 
-static void gfx_glx_set_fullscreen(bool on);
+static void gfx_glx_hide_mouse(bool hide) {
+    // Removes distracting mouse cursor during fullscreen play
+    if (hide) {
+        Cursor hideCursor;
+        Pixmap bitmapNoData;
+        XColor black;
+        static char noData[] = { 0,0,0,0,0,0,0,0 };
+        black.red = black.green = black.blue = 0;
+
+        bitmapNoData = XCreateBitmapFromData(glx.dpy, glx.win, noData, 8, 8);
+        hideCursor = XCreatePixmapCursor(glx.dpy, bitmapNoData, bitmapNoData,
+                                       &black, &black, 0, 0);
+        XDefineCursor(glx.dpy, glx.win, hideCursor);
+        XSync(glx.dpy, False);
+        XFreeCursor(glx.dpy, hideCursor);
+        XFreePixmap(glx.dpy, bitmapNoData);
+    } else {
+        XUndefineCursor(glx.dpy, glx.win);
+        XSync(glx.dpy, False);
+    }
+
+}
+
+static void gfx_glx_set_fullscreen_state(bool on, bool call_callback) {
+    if (glx.is_fullscreen == on) {
+        return;
+    }
+    glx.is_fullscreen = on;
+    
+    XEvent xev;
+    xev.xany.type = ClientMessage;
+    xev.xclient.message_type = glx.atom_wm_state;
+    xev.xclient.format = 32;
+    xev.xclient.window = glx.win;
+    xev.xclient.data.l[0] = on;
+    xev.xclient.data.l[1] = glx.atom_wm_state_fullscreen;
+    xev.xclient.data.l[2] = 0;
+    xev.xclient.data.l[3] = 0;
+    XSendEvent(glx.dpy, glx.root, 0, SubstructureNotifyMask | SubstructureRedirectMask, &xev);
+    gfx_glx_hide_mouse(on);
+    
+    if (glx.on_fullscreen_changed != NULL && call_callback) {
+        glx.on_fullscreen_changed(on);
+    }
+}
 
 static bool gfx_glx_check_extension(const char *extensions, const char *extension) {
     size_t len = strlen(extension);
@@ -254,7 +297,7 @@ static bool gfx_glx_check_extension(const char *extensions, const char *extensio
     return false;
 }
 
-static void gfx_glx_init(const char *game_name) {
+static void gfx_glx_init(const char *game_name, bool start_in_fullscreen) {
     // On NVIDIA proprietary driver, make the driver queue up to two frames on glXSwapBuffers,
     // which means that glXSwapBuffers should be non-blocking,
     // if we are sure to wait at least one vsync interval between calls.
@@ -284,9 +327,8 @@ static void gfx_glx_init(const char *game_name) {
     glx.atom_wm_state_fullscreen = XInternAtom(glx.dpy, "_NET_WM_STATE_FULLSCREEN", False);
     XMapWindow(glx.dpy, glx.win);
 
-    if (configFullscreen) {
-        glx.is_fullscreen = !glx.is_fullscreen;
-        gfx_glx_set_fullscreen(true);
+    if (start_in_fullscreen) {
+        gfx_glx_set_fullscreen_state(true, false);
     }
 
     char title[512];
@@ -339,6 +381,14 @@ static void gfx_glx_init(const char *game_name) {
     glx.vsync_interval = 16666;
 }
 
+static void gfx_glx_set_fullscreen_changed_callback(void (*on_fullscreen_changed)(bool is_now_fullscreen)) {
+    glx.on_fullscreen_changed = on_fullscreen_changed;
+}
+
+static void gfx_glx_set_fullscreen(bool enable) {
+    gfx_glx_set_fullscreen_state(enable, true);
+}
+
 static void gfx_glx_set_keyboard_callbacks(bool (*on_key_down)(int scancode), bool (*on_key_up)(int scancode), void (*on_all_keys_up)(void)) {
     glx.on_key_down = on_key_down;
     glx.on_key_up = on_key_up;
@@ -358,44 +408,6 @@ static void gfx_glx_get_dimensions(uint32_t *width, uint32_t *height) {
     *height = attributes.height;
 }
 
-static void gfx_glx_hide_mouse(bool hide) {
-    // Removes distracting mouse cursor during fullscreen play
-    if (hide) {
-        Cursor hideCursor;
-        Pixmap bitmapNoData;
-        XColor black;
-        static char noData[] = { 0,0,0,0,0,0,0,0 };
-        black.red = black.green = black.blue = 0;
-
-        bitmapNoData = XCreateBitmapFromData(glx.dpy, glx.win, noData, 8, 8);
-        hideCursor = XCreatePixmapCursor(glx.dpy, bitmapNoData, bitmapNoData,
-                                       &black, &black, 0, 0);
-        XDefineCursor(glx.dpy, glx.win, hideCursor);
-        XSync(glx.dpy, False);
-        XFreeCursor(glx.dpy, hideCursor);
-        XFreePixmap(glx.dpy, bitmapNoData);
-    } else {
-        XUndefineCursor(glx.dpy, glx.win);
-        XSync(glx.dpy, False);
-    }
-
-}
-
-static void gfx_glx_set_fullscreen(bool on) {
-    XEvent xev;
-    configFullscreen = on;
-    xev.xany.type = ClientMessage;
-    xev.xclient.message_type = glx.atom_wm_state;
-    xev.xclient.format = 32;
-    xev.xclient.window = glx.win;
-    xev.xclient.data.l[0] = on;
-    xev.xclient.data.l[1] = glx.atom_wm_state_fullscreen;
-    xev.xclient.data.l[2] = 0;
-    xev.xclient.data.l[3] = 0;
-    XSendEvent(glx.dpy, glx.root, 0, SubstructureNotifyMask | SubstructureRedirectMask, &xev);
-    gfx_glx_hide_mouse(on);
-}
-
 static void gfx_glx_handle_events(void) {
     while (XPending(glx.dpy)) {
         XEvent xev;
@@ -411,8 +423,7 @@ static void gfx_glx_handle_events(void) {
                 if (scancode != 0) {
                     if (xev.type == KeyPress) {
                         if (scancode == 0x44) { // F10
-                            glx.is_fullscreen = !glx.is_fullscreen;
-                            gfx_glx_set_fullscreen(glx.is_fullscreen);
+                            gfx_glx_set_fullscreen_state(!glx.is_fullscreen, true);
                         }
                         if (glx.on_key_down != NULL) {
                             glx.on_key_down(scancode);
@@ -586,6 +597,8 @@ static double gfx_glx_get_time(void) {
 struct GfxWindowManagerAPI gfx_glx = {
     gfx_glx_init,
     gfx_glx_set_keyboard_callbacks,
+    gfx_glx_set_fullscreen_changed_callback,
+    gfx_glx_set_fullscreen,
     gfx_glx_main_loop,
     gfx_glx_get_dimensions,
     gfx_glx_handle_events,
