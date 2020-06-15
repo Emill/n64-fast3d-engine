@@ -325,7 +325,13 @@ static void gfx_direct3d12_upload_texture(const uint8_t *rgba32_buf, int width, 
         heaps.resize(heaps.size() + 1);
         found_heap = &heaps.back();
         
-        const int textures_per_heap = 64;
+        // In case of HD textures, make sure too much memory isn't wasted
+        int textures_per_heap = 524288 / alloc_info.SizeInBytes;
+        if (textures_per_heap < 1) {
+            textures_per_heap = 1;
+        } else if (textures_per_heap > 64) {
+            textures_per_heap = 64;
+        }
         
         D3D12_HEAP_DESC heap_desc = {};
         heap_desc.SizeInBytes = alloc_info.SizeInBytes * textures_per_heap;

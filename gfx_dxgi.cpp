@@ -52,6 +52,8 @@ static struct {
     HRESULT (__stdcall *CreateDXGIFactory1)(REFIID riid, void **factory);
     HRESULT (__stdcall *CreateDXGIFactory2)(UINT flags, REFIID iid, void **factory);
 
+    bool process_dpi_awareness_done;
+
     RECT last_window_rect;
     bool is_full_screen, last_maximized_state;
 
@@ -77,6 +79,58 @@ static void load_dxgi_library(void) {
     dxgi.dxgi_module = LoadLibraryW(L"dxgi.dll");
     *(FARPROC *)&dxgi.CreateDXGIFactory1 = GetProcAddress(dxgi.dxgi_module, "CreateDXGIFactory1");
     *(FARPROC *)&dxgi.CreateDXGIFactory2 = GetProcAddress(dxgi.dxgi_module, "CreateDXGIFactory2");
+}
+
+template <typename Fun>
+static void run_as_dpi_aware(Fun f) {
+    // Make sure Windows 8.1 or newer doesn't upscale/downscale the rendered images.
+    // This is an issue on Windows 8.1 and newer where moving around the window
+    // between different monitors having different scaling settings will
+    // by default result in the DirectX image will also be scaled accordingly.
+    // The resulting scale factor is the curent monitor's scale factor divided by
+    // the initial monitor's scale factor. Setting per-monitor aware disables scaling.
+
+    // On Windows 10 1607 and later, that is solved by setting the awarenenss per window,
+    // which is done by using SetThreadDpiAwarenessContext before and after creating
+    // any window. When the message handler runs, the corresponding context also applies.
+
+    // From windef.h, missing in MinGW.
+    DECLARE_HANDLE(DPI_AWARENESS_CONTEXT);
+    #define DPI_AWARENESS_CONTEXT_UNAWARE               ((DPI_AWARENESS_CONTEXT)-1)
+    #define DPI_AWARENESS_CONTEXT_SYSTEM_AWARE          ((DPI_AWARENESS_CONTEXT)-2)
+    #define DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE     ((DPI_AWARENESS_CONTEXT)-3)
+    #define DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2  ((DPI_AWARENESS_CONTEXT)-4)
+    #define DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED     ((DPI_AWARENESS_CONTEXT)-5)
+
+    DPI_AWARENESS_CONTEXT (WINAPI *SetThreadDpiAwarenessContext)(DPI_AWARENESS_CONTEXT dpiContext);
+    *(FARPROC *)&SetThreadDpiAwarenessContext = GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetThreadDpiAwarenessContext");
+    DPI_AWARENESS_CONTEXT old_awareness_context;
+    if (SetThreadDpiAwarenessContext != nullptr) {
+        old_awareness_context = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    } else {
+        // Solution for Windows 8.1 and newer, but before Windows 10 1607.
+        // SetProcessDpiAwareness must be called before any drawing related API is called.
+        if (!dxgi.process_dpi_awareness_done) {
+            HMODULE shcore_module = LoadLibraryW(L"SHCore.dll");
+            if (shcore_module != nullptr) {
+                HRESULT (WINAPI *SetProcessDpiAwareness)(PROCESS_DPI_AWARENESS value);
+                *(FARPROC *)&SetProcessDpiAwareness = GetProcAddress(shcore_module, "SetProcessDpiAwareness");
+                if (SetProcessDpiAwareness != nullptr) {
+                    SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
+                    // Ignore result, will fail if already called or manifest already specifies dpi awareness.
+                }
+                FreeLibrary(shcore_module);
+            }
+            dxgi.process_dpi_awareness_done = true;
+        }
+    }
+
+    f();
+
+    // Restore the old context
+    if (SetThreadDpiAwarenessContext != nullptr && old_awareness_context != nullptr) {
+        SetThreadDpiAwarenessContext(old_awareness_context);
+    }
 }
 
 static void toggle_borderless_window_full_screen(bool enable, bool call_callback) {
@@ -210,45 +264,6 @@ static void gfx_dxgi_init(const char *game_name, bool start_in_fullscreen) {
     dxgi.qpc_init = qpc_init.QuadPart;
     dxgi.qpc_freq = qpc_freq.QuadPart;
 
-    // Make sure Windows 8.1 or newer doesn't upscale/downscale the rendered images.
-    // This is an issue on Windows 8.1 and newer where moving around the window
-    // between different monitors having different scaling settings will
-    // by default result in the DirectX image will also be scaled accordingly.
-    // The resulting scale factor is the curent monitor's scale factor divided by
-    // the initial monitor's scale factor. Setting per-monitor aware disables scaling.
-
-    // On Windows 10 1607 and later, that is solved by setting the awarenenss per window,
-    // which is done by using SetThreadDpiAwarenessContext before and after creating
-    // any window.
-
-    // From windef.h, missing in MinGW.
-    DECLARE_HANDLE(DPI_AWARENESS_CONTEXT);
-    #define DPI_AWARENESS_CONTEXT_UNAWARE               ((DPI_AWARENESS_CONTEXT)-1)
-    #define DPI_AWARENESS_CONTEXT_SYSTEM_AWARE          ((DPI_AWARENESS_CONTEXT)-2)
-    #define DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE     ((DPI_AWARENESS_CONTEXT)-3)
-    #define DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2  ((DPI_AWARENESS_CONTEXT)-4)
-    #define DPI_AWARENESS_CONTEXT_UNAWARE_GDISCALED     ((DPI_AWARENESS_CONTEXT)-5)
-
-    DPI_AWARENESS_CONTEXT (WINAPI *SetThreadDpiAwarenessContext)(DPI_AWARENESS_CONTEXT dpiContext);
-    *(FARPROC *)&SetThreadDpiAwarenessContext = GetProcAddress(GetModuleHandleW(L"user32.dll"), "SetThreadDpiAwarenessContext");
-    DPI_AWARENESS_CONTEXT old_awareness_context;
-    if (SetThreadDpiAwarenessContext != nullptr) {
-        old_awareness_context = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    } else {
-        // Solution for Windows 8.1 and newer, but before Windows 10 1607.
-        // SetProcessDpiAwareness must be called before any drawing related API is called.
-        HMODULE shcore_module = LoadLibraryW(L"SHCore.dll");
-        if (shcore_module != nullptr) {
-            HRESULT (WINAPI *SetProcessDpiAwareness)(PROCESS_DPI_AWARENESS value);
-            *(FARPROC *)&SetProcessDpiAwareness = GetProcAddress(shcore_module, "SetProcessDpiAwareness");
-            if (SetProcessDpiAwareness != nullptr) {
-                SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
-                // Ignore result, will fail if already called or manifest already specifies dpi awareness.
-            }
-            FreeLibrary(shcore_module);
-        }
-    }
-
     // Prepare window title
 
     char title[512];
@@ -276,16 +291,15 @@ static void gfx_dxgi_init(const char *game_name, bool start_in_fullscreen) {
 
     ATOM winclass = RegisterClassExW(&wcex);
 
-    RECT wr = {0, 0, DESIRED_SCREEN_WIDTH, DESIRED_SCREEN_HEIGHT};
-    AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
 
-    dxgi.h_wnd = CreateWindowW(WINCLASS_NAME, w_title, WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, 0, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr, nullptr, nullptr);
+    run_as_dpi_aware([&] () {
+        // We need to be dpi aware when calculating the size
+        RECT wr = {0, 0, DESIRED_SCREEN_WIDTH, DESIRED_SCREEN_HEIGHT};
+        AdjustWindowRect(&wr, WS_OVERLAPPEDWINDOW, FALSE);
 
-    // Restore the old context
-    if (SetThreadDpiAwarenessContext != nullptr && old_awareness_context != nullptr) {
-        SetThreadDpiAwarenessContext(old_awareness_context);
-    }
+        dxgi.h_wnd = CreateWindowW(WINCLASS_NAME, w_title, WS_OVERLAPPEDWINDOW,
+            CW_USEDEFAULT, 0, wr.right - wr.left, wr.bottom - wr.top, nullptr, nullptr, nullptr, nullptr);
+    });
 
     load_dxgi_library();
 
@@ -379,8 +393,8 @@ static bool gfx_dxgi_start_frame(void) {
         }
 
         double estimated_vsync_interval = (double)sync_qpc_diff / (double)sync_vsync_diff;
-        //printf("Estimated vsync_interval: %f\n", estimated_vsync_interval);
         uint64_t estimated_vsync_interval_us = qpc_to_us(estimated_vsync_interval);
+        //printf("Estimated vsync_interval: %d\n", (int)estimated_vsync_interval_us);
         if (estimated_vsync_interval_us < 2 || estimated_vsync_interval_us > 1000000) {
             // Unreasonable, maybe a monitor change
             estimated_vsync_interval_us = 16666;
@@ -472,7 +486,10 @@ static void gfx_dxgi_swap_buffers_end(void) {
     QueryPerformanceCounter(&t1);
 
     if (!dxgi.dropped_frame) {
-        WaitForSingleObject(dxgi.waitable_object, INFINITE);
+        if (dxgi.waitable_object != nullptr) {
+            WaitForSingleObject(dxgi.waitable_object, INFINITE);
+        }
+        // else TODO: maybe sleep until some estimated time the frame will be shown to reduce lag
     }
 
     DXGI_FRAME_STATISTICS stats;
@@ -519,8 +536,8 @@ void gfx_dxgi_create_factory_and_device(bool debug, int d3d_version, bool (*crea
 }
 
 ComPtr<IDXGISwapChain1> gfx_dxgi_create_swap_chain(IUnknown *device) {
-    bool win8 = IsWindows8OrGreater();
-    bool win81 = IsWindows8Point1OrGreater();
+    bool win8 = IsWindows8OrGreater(); // DXGI_SCALING_NONE is only supported on Win8 and beyond
+    bool dxgi_13 = dxgi.CreateDXGIFactory2 != nullptr; // DXGI 1.3 introduced waitable object
 
     DXGI_SWAP_CHAIN_DESC1 swap_chain_desc = {};
     swap_chain_desc.BufferCount = 2;
@@ -529,11 +546,16 @@ ComPtr<IDXGISwapChain1> gfx_dxgi_create_swap_chain(IUnknown *device) {
     swap_chain_desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
     swap_chain_desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
     swap_chain_desc.Scaling = win8 ? DXGI_SCALING_NONE : DXGI_SCALING_STRETCH;
-    swap_chain_desc.SwapEffect = /*win8 ? */DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL/* : DXGI_SWAP_EFFECT_DISCARD*/;
-    swap_chain_desc.Flags = win81 ? DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT : 0;
+    swap_chain_desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL; // Apparently this was backported to Win 7 Platform Update
+    swap_chain_desc.Flags = dxgi_13 ? DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT : 0;
     swap_chain_desc.SampleDesc.Count = 1;
 
-    ThrowIfFailed(dxgi.factory->CreateSwapChainForHwnd(device, dxgi.h_wnd, &swap_chain_desc, nullptr, nullptr, &dxgi.swap_chain));
+    run_as_dpi_aware([&] () {
+        // When setting size for the buffers, the values that DXGI puts into the desc (that can later be retrieved by GetDesc1)
+        // have been divided by the current scaling factor. By making this call dpi aware, no division will be performed.
+        // The same goes for IDXGISwapChain::ResizeBuffers(), however that function is currently only called from the message handler.
+        ThrowIfFailed(dxgi.factory->CreateSwapChainForHwnd(device, dxgi.h_wnd, &swap_chain_desc, nullptr, nullptr, &dxgi.swap_chain));
+    });
     ThrowIfFailed(dxgi.factory->MakeWindowAssociation(dxgi.h_wnd, DXGI_MWA_NO_ALT_ENTER));
 
     ComPtr<IDXGISwapChain2> swap_chain2;
@@ -541,6 +563,10 @@ ComPtr<IDXGISwapChain1> gfx_dxgi_create_swap_chain(IUnknown *device) {
         ThrowIfFailed(swap_chain2->SetMaximumFrameLatency(1));
         dxgi.waitable_object = swap_chain2->GetFrameLatencyWaitableObject();
         WaitForSingleObject(dxgi.waitable_object, INFINITE);
+    } else {
+        ComPtr<IDXGIDevice1> device1;
+        ThrowIfFailed(device->QueryInterface(IID_PPV_ARGS(&device1)));
+        ThrowIfFailed(device1->SetMaximumFrameLatency(1));
     }
 
     ThrowIfFailed(dxgi.swap_chain->GetDesc1(&swap_chain_desc));

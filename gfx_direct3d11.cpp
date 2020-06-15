@@ -131,19 +131,24 @@ static struct {
 
 static LARGE_INTEGER last_time, accumulated_time, frequency;
 
-static void create_render_target_views(void) {
-    // Release previous stuff (if any)
-
-    d3d.backbuffer_view.Reset();
-    d3d.depth_stencil_view.Reset();
-
-    // Resize swap chain buffers
-
+static void create_render_target_views(bool is_resize) {
     DXGI_SWAP_CHAIN_DESC1 desc1;
-    ThrowIfFailed(d3d.swap_chain->GetDesc1(&desc1));
-    ThrowIfFailed(d3d.swap_chain->ResizeBuffers(0, 0, 0, DXGI_FORMAT_UNKNOWN, desc1.Flags),
-                  gfx_dxgi_get_h_wnd(), "Failed to resize IDXGISwapChain buffers.");
-    
+
+    if (is_resize) {
+        // Release previous stuff (if any)
+
+        d3d.backbuffer_view.Reset();
+        d3d.depth_stencil_view.Reset();
+
+        // Resize swap chain buffers
+
+        ThrowIfFailed(d3d.swap_chain->GetDesc1(&desc1));
+        ThrowIfFailed(d3d.swap_chain->ResizeBuffers(0, 0, 0, DXGI_FORMAT_UNKNOWN, desc1.Flags),
+                      gfx_dxgi_get_h_wnd(), "Failed to resize IDXGISwapChain buffers.");
+    }
+
+    // Get new size
+
     ThrowIfFailed(d3d.swap_chain->GetDesc1(&desc1));
 
     // Create back buffer
@@ -189,14 +194,14 @@ static void gfx_d3d11_init(void) {
         ThrowIfFailed(HRESULT_FROM_WIN32(GetLastError()), gfx_dxgi_get_h_wnd(), "d3d11.dll not found");
     }
     d3d.D3D11CreateDevice = (PFN_D3D11_CREATE_DEVICE)GetProcAddress(d3d.d3d11_module, "D3D11CreateDevice");
-    
+
     // Load D3DCompiler_47.dll
     d3d.d3dcompiler_module = LoadLibraryW(L"D3DCompiler_47.dll");
     if (d3d.d3dcompiler_module == nullptr) {
         ThrowIfFailed(HRESULT_FROM_WIN32(GetLastError()), gfx_dxgi_get_h_wnd(), "D3DCompiler_47.dll not found");
     }
     d3d.D3DCompile = (pD3DCompile)GetProcAddress(d3d.d3dcompiler_module, "D3DCompile");
-    
+
     // Create D3D11 device
 
     gfx_dxgi_create_factory_and_device(DEBUG_D3D, 11, [](IDXGIAdapter1 *adapter, bool test_only) {
@@ -251,7 +256,7 @@ static void gfx_d3d11_init(void) {
 
     // Create views
 
-    create_render_target_views();
+    create_render_target_views(false);
 
     // Create main vertex buffer
 
@@ -315,7 +320,7 @@ static struct ShaderProgram *gfx_d3d11_create_and_load_new_shader(uint32_t shade
 
     char buf[4096];
     size_t len, num_floats;
-    
+
     gfx_direct3d_common_build_shader(buf, len, num_floats, cc_features, false, THREE_POINT_FILTERING);
 
     ComPtr<ID3DBlob> vs, ps;
@@ -407,7 +412,7 @@ static struct ShaderProgram *gfx_d3d11_lookup_shader(uint32_t shader_id) {
 
 static void gfx_d3d11_shader_get_info(struct ShaderProgram *prg, uint8_t *num_inputs, bool used_textures[2]) {
     struct ShaderProgramD3D11 *p = (struct ShaderProgramD3D11 *)prg;
-    
+
     *num_inputs = p->num_inputs;
     used_textures[0] = p->used_textures[0];
     used_textures[1] = p->used_textures[1];
@@ -469,7 +474,7 @@ static void gfx_d3d11_upload_texture(const uint8_t *rgba32_buf, int width, int h
     TextureData *texture_data = &d3d.textures[d3d.current_texture_ids[d3d.current_tile]];
     texture_data->width = width;
     texture_data->height = height;
-    
+
     if (texture_data->resource_view.Get() != nullptr) {
         // Free the previous texture in this slot
         texture_data->resource_view.Reset();
@@ -655,7 +660,7 @@ static void gfx_d3d11_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t
 }
 
 static void gfx_d3d11_on_resize(void) {
-    create_render_target_views();
+    create_render_target_views(true);
 }
 
 static void gfx_d3d11_start_frame(void) {
