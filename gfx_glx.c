@@ -153,6 +153,7 @@ static struct {
     
     Atom atom_wm_state;
     Atom atom_wm_state_fullscreen;
+    Atom atom_wm_state_hidden;
     
     bool is_fullscreen;
     void (*on_fullscreen_changed)(bool is_now_fullscreen);
@@ -325,6 +326,7 @@ static void gfx_glx_init(const char *game_name, bool start_in_fullscreen) {
     
     glx.atom_wm_state = XInternAtom(glx.dpy, "_NET_WM_STATE", False);
     glx.atom_wm_state_fullscreen = XInternAtom(glx.dpy, "_NET_WM_STATE_FULLSCREEN", False);
+    glx.atom_wm_state_hidden = XInternAtom(glx.dpy, "_NET_WM_STATE_HIDDEN", False);
     XMapWindow(glx.dpy, glx.win);
 
     if (start_in_fullscreen) {
@@ -395,10 +397,25 @@ static void gfx_glx_set_keyboard_callbacks(bool (*on_key_down)(int scancode), bo
     glx.on_all_keys_up = on_all_keys_up;
 }
 
-static void gfx_glx_main_loop(void (*run_one_game_iter)(void)) {
-    while (1) {
-        run_one_game_iter();
+static bool window_is_minimized() {
+    Atom actual_type;
+    int actual_format;
+    unsigned long i, num_items, bytes_after;
+    Atom *atoms;
+
+    atoms = NULL;
+
+    XGetWindowProperty(glx.dpy, glx.win, glx.atom_wm_state, 0, 1024, False, XA_ATOM, &actual_type, &actual_format, &num_items, &bytes_after, (unsigned char **) &atoms);
+
+    for (i = 0; i < num_items; ++i) {
+        if (atoms[i] == glx.atom_wm_state_hidden) {
+            XFree(atoms);
+            return true;
+        }
     }
+
+    XFree(atoms);
+    return false;
 }
 
 static void gfx_glx_get_dimensions(uint32_t *width, uint32_t *height) {
@@ -435,6 +452,18 @@ static void gfx_glx_handle_events(void) {
                     }
                 }
             }
+        }
+    }
+}
+
+static void gfx_glx_main_loop(void (*run_one_game_iter)(void)) {
+    while (1) {
+        if (window_is_minimized()) {
+            struct timespec ts = {0, 50000000};
+            nanosleep(&ts, NULL);
+            gfx_glx_handle_events();
+        } else {
+            run_one_game_iter();
         }
     }
 }

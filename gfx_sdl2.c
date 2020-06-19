@@ -204,12 +204,6 @@ static void gfx_sdl_set_keyboard_callbacks(bool (*on_key_down)(int scancode), bo
     on_all_keys_up_callback = on_all_keys_up;
 }
 
-static void gfx_sdl_main_loop(void (*run_one_game_iter)(void)) {
-    while (1) {
-        run_one_game_iter();
-    }
-}
-
 static void gfx_sdl_get_dimensions(uint32_t *width, uint32_t *height) {
     *width = window_width;
     *height = window_height;
@@ -262,6 +256,17 @@ static void gfx_sdl_handle_events(void) {
                 break;
             case SDL_QUIT:
                 exit(0);
+        }
+    }
+}
+
+static void gfx_sdl_main_loop(void (*run_one_game_iter)(void)) {
+    while (1) {
+        if ((SDL_GetWindowFlags(wnd) & SDL_WINDOW_MINIMIZED) != 0) {
+            SDL_Delay(50);
+            gfx_sdl_handle_events();
+        } else {
+            run_one_game_iter();
         }
     }
 }
