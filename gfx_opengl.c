@@ -456,9 +456,11 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
     }
 
 #ifdef THREE_POINT_FILTERING
-    prg->texture_width_location = glGetUniformLocation(shader_program, "texture_width");
-    prg->texture_height_location = glGetUniformLocation(shader_program, "texture_height");
-    prg->texture_linear_filtering_location = glGetUniformLocation(shader_program, "texture_linear_filtering");
+    if (cc_features.used_textures[0] || cc_features.used_textures[1]) {
+        prg->texture_width_location = glGetUniformLocation(shader_program, "texture_width");
+        prg->texture_height_location = glGetUniformLocation(shader_program, "texture_height");
+        prg->texture_linear_filtering_location = glGetUniformLocation(shader_program, "texture_linear_filtering");
+    }
 #endif
 
     return prg;
