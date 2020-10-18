@@ -345,7 +345,7 @@ static struct ShaderProgram *gfx_opengl_create_and_load_new_shader(uint32_t shad
 
     if (cc_features.opt_alpha && cc_features.opt_noise) {
         append_line(fs_buf, &fs_len, "vec2 coords = (screenPos.xy / screenPos.w) * noise_scale;");
-        append_line(fs_buf, &fs_len, "texel.a *= floor(random(vec3(floor(coords), float(noise_frame))) + 0.5);");
+        append_line(fs_buf, &fs_len, "texel.a *= floor(clamp(random(vec3(floor(coords), float(noise_frame))) + texel.a, 0.0, 1.0));");
     }
 
     if (cc_features.opt_alpha) {

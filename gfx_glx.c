@@ -153,6 +153,7 @@ static struct {
     
     Atom atom_wm_state;
     Atom atom_wm_state_fullscreen;
+    Atom atom_wm_delete_window;
     
     bool is_fullscreen;
     void (*on_fullscreen_changed)(bool is_now_fullscreen);
@@ -325,6 +326,8 @@ static void gfx_glx_init(const char *game_name, bool start_in_fullscreen) {
     
     glx.atom_wm_state = XInternAtom(glx.dpy, "_NET_WM_STATE", False);
     glx.atom_wm_state_fullscreen = XInternAtom(glx.dpy, "_NET_WM_STATE_FULLSCREEN", False);
+    glx.atom_wm_delete_window = XInternAtom(glx.dpy, "WM_DELETE_WINDOW", False);
+    XSetWMProtocols(glx.dpy, glx.win, &glx.atom_wm_delete_window, 1);
     XMapWindow(glx.dpy, glx.win);
 
     if (start_in_fullscreen) {
@@ -435,6 +438,9 @@ static void gfx_glx_handle_events(void) {
                     }
                 }
             }
+        }
+        if (xev.type == ClientMessage && xev.xclient.data.l[0] == glx.atom_wm_delete_window) {
+            exit(0);
         }
     }
 }
