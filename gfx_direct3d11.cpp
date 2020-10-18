@@ -590,32 +590,38 @@ static void gfx_d3d11_draw_triangles(float buf_vbo[], size_t buf_vbo_len, size_t
         d3d.context->RSSetState(d3d.rasterizer_state.Get());
     }
 
-    bool textures_changed = false;
+    bool per_draw_cb_changed = false;
 
     for (int i = 0; i < 2; i++) {
-        if (d3d.shader_program->used_textures[i]) {
-            if (d3d.last_resource_views[i].Get() != d3d.textures[d3d.current_texture_ids[i]].resource_view.Get()) {
-                d3d.last_resource_views[i] = d3d.textures[d3d.current_texture_ids[i]].resource_view.Get();
-                d3d.context->PSSetShaderResources(i, 1, d3d.textures[d3d.current_texture_ids[i]].resource_view.GetAddressOf());
+        if (!d3d.shader_program->used_textures[i])
+            continue;
+
+        if (d3d.last_resource_views[i].Get() == d3d.textures[d3d.current_texture_ids[i]].resource_view.Get())
+            continue;
+
+        d3d.last_resource_views[i] = d3d.textures[d3d.current_texture_ids[i]].resource_view.Get();
+        d3d.context->PSSetShaderResources(i, 1, d3d.textures[d3d.current_texture_ids[i]].resource_view.GetAddressOf());
+
+        if (d3d.last_sampler_states[i].Get() != d3d.textures[d3d.current_texture_ids[i]].sampler_state.Get()) {
+            d3d.last_sampler_states[i] = d3d.textures[d3d.current_texture_ids[i]].sampler_state.Get();
+            d3d.context->PSSetSamplers(i, 1, d3d.textures[d3d.current_texture_ids[i]].sampler_state.GetAddressOf());
+        }
 
 #if THREE_POINT_FILTERING
-                d3d.per_draw_cb_data.textures[i].width = d3d.textures[d3d.current_texture_ids[i]].width;
-                d3d.per_draw_cb_data.textures[i].height = d3d.textures[d3d.current_texture_ids[i]].height;
-                d3d.per_draw_cb_data.textures[i].linear_filtering = d3d.textures[d3d.current_texture_ids[i]].linear_filtering;
-                textures_changed = true;
-#endif
-
-                if (d3d.last_sampler_states[i].Get() != d3d.textures[d3d.current_texture_ids[i]].sampler_state.Get()) {
-                    d3d.last_sampler_states[i] = d3d.textures[d3d.current_texture_ids[i]].sampler_state.Get();
-                    d3d.context->PSSetSamplers(i, 1, d3d.textures[d3d.current_texture_ids[i]].sampler_state.GetAddressOf());
-                }
-            }
+        if (d3d.per_draw_cb_data.textures[i].width != d3d.textures[d3d.current_texture_ids[i]].width
+            || d3d.per_draw_cb_data.textures[i].height != d3d.textures[d3d.current_texture_ids[i]].height
+            || d3d.per_draw_cb_data.textures[i].linear_filtering != d3d.textures[d3d.current_texture_ids[i]].linear_filtering) {
+            d3d.per_draw_cb_data.textures[i].width = d3d.textures[d3d.current_texture_ids[i]].width;
+            d3d.per_draw_cb_data.textures[i].height = d3d.textures[d3d.current_texture_ids[i]].height;
+            d3d.per_draw_cb_data.textures[i].linear_filtering = d3d.textures[d3d.current_texture_ids[i]].linear_filtering;
+            per_draw_cb_changed = true;
         }
+#endif
     }
 
     // Set per-draw constant buffer
 
-    if (textures_changed) {
+    if (per_draw_cb_changed) {
         D3D11_MAPPED_SUBRESOURCE ms;
         ZeroMemory(&ms, sizeof(D3D11_MAPPED_SUBRESOURCE));
         d3d.context->Map(d3d.per_draw_cb.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &ms);
