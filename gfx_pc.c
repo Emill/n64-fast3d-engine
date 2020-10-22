@@ -589,9 +589,9 @@ static void gfx_sp_matrix(uint8_t parameters, const int32_t *addr) {
 
 static void gfx_sp_pop_matrix(uint32_t count) {
     while (count--) {
-        if (rsp.modelview_matrix_stack_size > 0) {
+        if (rsp.modelview_matrix_stack_size > 1) {
             --rsp.modelview_matrix_stack_size;
-            if (rsp.modelview_matrix_stack_size > 0) {
+            if (rsp.modelview_matrix_stack_size > 1) {
                 gfx_matrix_mul(rsp.MP_matrix, rsp.modelview_matrix_stack[rsp.modelview_matrix_stack_size - 1], rsp.P_matrix);
             }
         }
