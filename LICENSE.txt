@@ -5,7 +5,7 @@ are permitted provided that the following conditions are met:
 
 1. Redistributions of source code must retain the above copyright notice, this
    list of conditions and the following disclaimer.
-2. Redistributions in binary form are not allowed.
+2. Redistributions in binary form are not allowed EXCEPT redistributions in binary form are allowed as long as the binary does not contain any assets you do not have the right to distribute.
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
 ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
