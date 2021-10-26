@@ -837,8 +837,8 @@ static void gfx_sp_tri1(uint8_t vtx1_idx, uint8_t vtx2_idx, uint8_t vtx3_idx) {
     }
     
     bool use_texture = used_textures[0] || used_textures[1];
-    uint32_t tex_width = (rdp.texture_tile.lrs - rdp.texture_tile.uls + 4) / 4;
-    uint32_t tex_height = (rdp.texture_tile.lrt - rdp.texture_tile.ult + 4) / 4;
+    uint32_t tex_width = (rdp.texture_tile.lrs - 4) / 4;
+    uint32_t tex_height = (rdp.texture_tile.lrt + 4) / 4;
     
     bool z_is_from_0_to_1 = gfx_rapi->z_is_from_0_to_1();
     
