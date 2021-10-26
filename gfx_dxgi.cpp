@@ -225,7 +225,7 @@ static LRESULT CALLBACK gfx_dxgi_wnd_proc(HWND h_wnd, UINT message, WPARAM w_par
         case WM_DESTROY:
             exit(0);
         case WM_PAINT:
-            if (dxgi.showing_error) {
+            if (dxgi.showing_error || IsIconic(h_wnd)) {
                 return DefWindowProcW(h_wnd, message, w_param, l_param);
             } else {
                 if (dxgi.run_one_game_iter != nullptr) {
